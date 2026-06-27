@@ -1,0 +1,35 @@
+{
+  "name": "rad-codegraph",
+  "version": "0.1.0",
+  "description": "CodeGraph CLI guidance for Pi Agent — injects usage hints when .codegraph index is present.",
+  "license": "MIT",
+  "type": "module",
+  "files": [
+    "extensions"
+  ],
+	"exports": {
+		"./extensions": "./extensions/index.ts"
+	},
+  "pi": {
+    "extensions": [
+      "./extensions"
+    ]
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "ci": "npm run typecheck && npm test"
+  },
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-coding-agent": "^0.79.6",
+    "@types/node": "^26.0.0",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.7"
+  }
+}

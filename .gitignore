@@ -1,0 +1,17 @@
+node_modules
+
+# CodeGraph
+.codegraph/
+
+# Log
+npm-debug.log*
+
+# macOS
+.DS_Store
+
+# TypeScript
+*.tsbuildinfo
+
+# Agent
+AGENTS.md
+CONTEXT.md
