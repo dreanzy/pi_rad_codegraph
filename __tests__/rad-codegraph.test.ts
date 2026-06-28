@@ -36,8 +36,8 @@ describe("rad-codegraph", () => {
 		});
 
 		expect(result!.systemPrompt).toContain("existing prompt");
-		expect(result!.systemPrompt).toContain("codegraph query");
-		expect(result!.systemPrompt).toContain("codegraph status");
+		expect(result!.systemPrompt).toContain("codegraph explore");
+		expect(result!.systemPrompt).toContain("codegraph node");
 		expect(existsSync).toHaveBeenCalledWith(
 			path.join("/test/project", ".codegraph"),
 		);
