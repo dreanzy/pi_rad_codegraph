@@ -54,6 +54,7 @@ function registerTools(pi: ExtensionAPI, codegraphPath: string) {
 			cwd,
 			timeout: 30_000,
 			signal,
+			shell: true,
 		});
 		return stdout as string;
 	}
