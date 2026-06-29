@@ -1,15 +1,15 @@
 {
   "name": "rad-codegraph",
   "version": "0.1.0",
-  "description": "CodeGraph CLI guidance for Pi Agent — injects usage hints when .codegraph index is present.",
+  "description": "CodeGraph tools for Pi Agent — codegraph_explore and codegraph_node for indexed code navigation.",
   "license": "MIT",
   "type": "module",
   "files": [
     "extensions"
   ],
-	"exports": {
-		"./extensions": "./extensions/index.ts"
-	},
+  "exports": {
+    "./extensions": "./extensions/index.ts"
+  },
   "pi": {
     "extensions": [
       "./extensions"
@@ -31,5 +31,8 @@
     "@types/node": "^26.0.0",
     "typescript": "^6.0.3",
     "vitest": "^4.1.7"
+  },
+  "dependencies": {
+    "typebox": "^1.3.1"
   }
 }

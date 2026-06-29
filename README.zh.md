@@ -4,7 +4,7 @@
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![English](https://img.shields.io/badge/lang-English-blue)](README.md)
 
-为 [pi](https://pi.dev) Agent 注入 CodeGraph CLI 使用引导——当项目下有 `.codegraph` 索引时自动提示。
+为 [pi](https://pi.dev) Agent 注册 `codegraph_explore` 和 `codegraph_node` 两个自定义工具——项目下有 `.codegraph` 索引时自动启用。
 
 ## 安装
 
@@ -21,34 +21,23 @@ pi install git:github.com/dreanzy/pi_rad_codegraph
 /reload
 ```
 
-验证扩展已加载：
-
-```bash
-pi list
-# 应显示 rad-codegraph 及其扩展
-```
-
 ## 工作原理
 
-本扩展**不注册任何自定义工具**。每次用户发送消息时，它检查当前目录下是否存在 `.codegraph` 目录：
+本扩展注册两个自定义工具，LLM 可直接调用，替代 Read/Grep：
 
-- **有** → 在 system prompt 中注入一段简短指引，告诉 LLM 如何通过 bash 直接调用 `codegraph` CLI
-- **无** → 什么都不注入，不浪费 token
+| 工具 | 用途 | 参数 |
+|------|------|------|
+| `codegraph_explore` | 主入口：查询源码 + 调用路径 + 波及范围 | `query`（字符串） |
+| `codegraph_node` | 读文件/符号：行号源码 + 调用者/被调用者链 | `name`, `file?`, `offset?`, `limit?` |
 
-## CLI 命令参考
+**工具注册取决于 `.codegraph` 是否存在。** 无索引的项目不会注册任何工具——零 token 浪费。索引初始化后需 `/reload` 才会加载工具。
 
-引导 LLM 使用的 `codegraph` CLI 命令：
+反模式引导嵌入在工具描述和 system prompt 的 Guidelines 段中：
 
-| 命令 | 用途 |
-|------|------|
-| `codegraph query <search>` | 按名称搜索符号 |
-| `codegraph explore <query...>` | 探索区域：符号 + 调用路径 |
-| `codegraph node <name>` | 符号源码 + 调用者/被调用者链 |
-| `codegraph files` | 项目文件结构 |
-| `codegraph callers <symbol>` | 查找调用某符号的函数 |
-| `codegraph callees <symbol>` | 查找某符号调用的函数 |
-| `codegraph impact <symbol>` | 变更影响分析 |
-| `codegraph status` | 索引健康状态 |
+- `codegraph_explore` 优先于 Read/Grep
+- 不要用 grep 验证 codegraph 的结果
+- 不要手工重建调用流程
+- `codegraph_node` 输出的行号源码可直接用于 Edit，视为已 Read
 
 ## 环境要求
 

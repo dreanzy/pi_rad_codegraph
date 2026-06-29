@@ -4,7 +4,7 @@
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![中文文档](https://img.shields.io/badge/lang-中文-red)](README.zh.md)
 
-CodeGraph CLI guidance for [pi](https://pi.dev) Agent — injects usage hints when `.codegraph` index is present.
+CodeGraph tools for [pi](https://pi.dev) Agent — registers `codegraph_explore` and `codegraph_node` as callable tools when a `.codegraph` index is present.
 
 ## Installation
 
@@ -21,33 +21,23 @@ pi install git:github.com/dreanzy/pi_rad_codegraph
 /reload
 ```
 
-Verify the extension loaded:
-
-```bash
-pi list
-# Should show rad-codegraph and its extensions
-```
-
 ## How it works
 
-This extension does **not** register custom tools. Instead, it checks for a `.codegraph` directory in the current working directory on each prompt, and if found, injects a brief reference into the system prompt telling the LLM how to use the `codegraph` CLI directly via bash commands.
+This extension registers two custom tools that the LLM can call directly, replacing Read/Grep for indexed code:
 
-If the project has no `.codegraph` directory, nothing is injected — zero token waste.
+| Tool | Purpose | Parameters |
+|------|---------|------------|
+| `codegraph_explore` | Primary exploration: returns source + call paths + blast radius for a query | `query` (string) |
+| `codegraph_node` | Read a file or symbol: line-numbered source + caller/callee trail | `name`, `file?`, `offset?`, `limit?` |
 
-## Client commands reference
+**Tool registration is gated on `.codegraph` existence.** If the project has no `.codegraph` index, no tools are registered — zero token waste. If the index is later initialized, use `/reload` to pick it up.
 
-The LLM is guided to use these `codegraph` CLI commands:
+Anti-pattern guidance is embedded in the tool descriptions and system prompt Guidelines section:
 
-| Command | Purpose |
-|---------|---------|
-| `codegraph query <search>` | Quick symbol search by name |
-| `codegraph explore <query...>` | Explore area: symbols + call paths |
-| `codegraph node <name>` | Symbol source + caller/callee trail |
-| `codegraph files` | Project file structure from index |
-| `codegraph callers <symbol>` | Find callers of a symbol |
-| `codegraph callees <symbol>` | Find callees of a symbol |
-| `codegraph impact <symbol>` | Change impact analysis |
-| `codegraph status` | Index health |
+- Use `codegraph_explore` before Read/Grep
+- Don't re-verify codegraph results with grep
+- Don't reconstruct call flows by hand
+- `codegraph_node` output is safe to Edit from — treat as already Read
 
 ## Requirements
 

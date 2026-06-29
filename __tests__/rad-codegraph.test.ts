@@ -1,56 +1,51 @@
 import { describe, expect, it, vi, beforeAll, beforeEach } from "vitest";
-import path from "node:path";
+import { existsSync } from "node:fs";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 vi.mock("node:fs", () => ({ existsSync: vi.fn() }));
-import { existsSync } from "node:fs";
 
-type BeforeAgentEvent = {
-	systemPrompt: string;
-	systemPromptOptions: { cwd: string };
-};
-type BeforeAgentResult = { systemPrompt: string } | undefined;
+type RegisteredTool = { name: string };
+const registeredTools: RegisteredTool[] = [];
 
-let handler: (event: BeforeAgentEvent) => BeforeAgentResult;
+type OnHandler = (event: any, ctx: any) => void | Promise<void>;
+let sessionStartHandler: OnHandler | undefined;
+
+const mockPi = {
+	registerTool: vi.fn((def: { name: string }) => {
+		registeredTools.push({ name: def.name });
+	}),
+	on: vi.fn((event: string, handler: OnHandler) => {
+		if (event === "session_start") sessionStartHandler = handler;
+	}),
+} as unknown as ExtensionAPI;
 
 beforeAll(async () => {
 	const mod = await import("../extensions/index.js");
-	const pi = { on: vi.fn() } as unknown as ExtensionAPI;
-	mod.default(pi);
-	handler = (pi.on as ReturnType<typeof vi.fn>).mock.calls.find(
-		(c: unknown[]) => (c as [string])[0] === "before_agent_start",
-	)![1] as (event: BeforeAgentEvent) => BeforeAgentResult;
+	mod.default(mockPi);
 });
 
 beforeEach(() => {
 	vi.clearAllMocks();
+	registeredTools.length = 0;
 });
 
 describe("rad-codegraph", () => {
-	it("injects guidance when .codegraph exists in cwd", async () => {
+	it("registers tools when .codegraph exists", async () => {
 		vi.mocked(existsSync).mockReturnValue(true);
 
-		const result = await handler({
-			systemPrompt: "existing prompt",
-			systemPromptOptions: { cwd: "/test/project" },
-		});
+		await sessionStartHandler!({}, { cwd: "/test/project" });
 
-		expect(result!.systemPrompt).toContain("existing prompt");
-		expect(result!.systemPrompt).toContain("codegraph explore");
-		expect(result!.systemPrompt).toContain("codegraph node");
-		expect(existsSync).toHaveBeenCalledWith(
-			path.join("/test/project", ".codegraph"),
-		);
+		expect(mockPi.registerTool).toHaveBeenCalledTimes(2);
+		const names = registeredTools.map((t) => t.name);
+		expect(names).toContain("codegraph_explore");
+		expect(names).toContain("codegraph_node");
 	});
 
-	it("returns nothing when .codegraph does not exist", async () => {
+	it("skips tool registration when .codegraph is missing", async () => {
 		vi.mocked(existsSync).mockReturnValue(false);
 
-		const result = await handler({
-			systemPrompt: "existing prompt",
-			systemPromptOptions: { cwd: "/test/project" },
-		});
+		await sessionStartHandler!({}, { cwd: "/test/project" });
 
-		expect(result).toBeUndefined();
+		expect(mockPi.registerTool).not.toHaveBeenCalled();
 	});
 });
