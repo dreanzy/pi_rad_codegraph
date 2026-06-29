@@ -218,7 +218,6 @@ function registerTools(pi: ExtensionAPI, codegraphPath: string) {
 			}
 		},
 	});
-
 }
 
 export default function codegraphExtension(pi: ExtensionAPI) {
