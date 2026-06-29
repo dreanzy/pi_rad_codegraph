@@ -28,7 +28,11 @@ function hasIndex(cwd: string): boolean {
 
 function resolveBinary(name: string): string | null {
 	const dirs = (process.env.PATH || "").split(path.delimiter);
-	for (const exe of [name, `${name}.cmd`, `${name}.exe`]) {
+	const exts =
+		process.platform === "win32"
+			? [`${name}.cmd`, `${name}.exe`, name]
+			: [name, `${name}.cmd`, `${name}.exe`];
+	for (const exe of exts) {
 		for (const dir of dirs) {
 			const full = path.resolve(dir, exe);
 			try {
