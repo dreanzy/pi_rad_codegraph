@@ -1,8 +1,12 @@
 import { describe, expect, it, vi, beforeAll, beforeEach } from "vitest";
-import { existsSync } from "node:fs";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
-vi.mock("node:fs", () => ({ existsSync: vi.fn() }));
+vi.mock("node:fs", () => ({
+	accessSync: vi.fn(),
+	constants: { X_OK: 1 },
+	existsSync: vi.fn(),
+}));
+import { accessSync, existsSync } from "node:fs";
 
 type RegisteredTool = { name: string };
 const registeredTools: RegisteredTool[] = [];
@@ -30,8 +34,12 @@ beforeEach(() => {
 });
 
 describe("rad-codegraph", () => {
-	it("registers tools when .codegraph exists", async () => {
+	it("registers tools when .codegraph exists and codegraph binary is found", async () => {
 		vi.mocked(existsSync).mockReturnValue(true);
+		vi.mocked(accessSync).mockImplementation((p: any) => {
+			if (String(p).endsWith("codegraph")) return; // found in PATH
+			throw new Error("not found");
+		});
 
 		await sessionStartHandler!({}, { cwd: "/test/project" });
 
@@ -43,6 +51,17 @@ describe("rad-codegraph", () => {
 
 	it("skips tool registration when .codegraph is missing", async () => {
 		vi.mocked(existsSync).mockReturnValue(false);
+
+		await sessionStartHandler!({}, { cwd: "/test/project" });
+
+		expect(mockPi.registerTool).not.toHaveBeenCalled();
+	});
+
+	it("skips tool registration when codegraph binary is not found", async () => {
+		vi.mocked(existsSync).mockReturnValue(true);
+		vi.mocked(accessSync).mockImplementation(() => {
+			throw new Error("not found");
+		});
 
 		await sessionStartHandler!({}, { cwd: "/test/project" });
 

@@ -1,5 +1,5 @@
 import { execFile as execFileCb } from "node:child_process";
-import { existsSync } from "node:fs";
+import { accessSync, constants, existsSync } from "node:fs";
 import path from "node:path";
 import { promisify } from "node:util";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -17,29 +17,43 @@ const NODE_GUIDELINES = [
 	"Use codegraph_node instead of Read to get line-numbered source for a file or symbol — treat its output as already Read.",
 ];
 
-async function runCodegraph(
-	args: string[],
-	cwd: string,
-	signal?: AbortSignal,
-): Promise<string> {
-	const { stdout } = await execFile("codegraph", args, {
-		cwd,
-		timeout: 30_000,
-		signal,
-	});
-	return stdout as string;
-}
-
-function hasIndex(cwd: string): boolean {
-	return existsSync(path.join(cwd, ".codegraph"));
-}
-
 const NOT_INDEXED_MSG =
 	"This project does not have a .codegraph index. " +
 	"Run `codegraph init -i` in the project to enable CodeGraph. " +
 	"Until then, use Read/Grep for this project.";
 
-function registerTools(pi: ExtensionAPI) {
+function hasIndex(cwd: string): boolean {
+	return existsSync(path.join(cwd, ".codegraph"));
+}
+
+function resolveBinary(name: string): string | null {
+	const dirs = (process.env.PATH || "").split(path.delimiter);
+	for (const exe of [name, `${name}.cmd`, `${name}.exe`]) {
+		for (const dir of dirs) {
+			const full = path.resolve(dir, exe);
+			try {
+				accessSync(full, constants.X_OK);
+				return full;
+			} catch {}
+		}
+	}
+	return null;
+}
+
+function registerTools(pi: ExtensionAPI, codegraphPath: string) {
+	async function runCodegraph(
+		args: string[],
+		cwd: string,
+		signal?: AbortSignal,
+	): Promise<string> {
+		const { stdout } = await execFile(codegraphPath, args, {
+			cwd,
+			timeout: 30_000,
+			signal,
+		});
+		return stdout as string;
+	}
+
 	pi.registerTool({
 		name: "codegraph_explore",
 		label: "CodeGraph Explore",
@@ -128,6 +142,10 @@ function registerTools(pi: ExtensionAPI) {
 export default function codegraphExtension(pi: ExtensionAPI) {
 	pi.on("session_start", async (_event, ctx) => {
 		if (!hasIndex(ctx.cwd)) return;
-		registerTools(pi);
+
+		const codegraphPath = resolveBinary("codegraph");
+		if (!codegraphPath) return;
+
+		registerTools(pi, codegraphPath);
 	});
 }
