@@ -11,6 +11,8 @@ const EXPLORE_GUIDELINES = [
 	"Use codegraph_explore before Read or Grep for any indexed code — one call returns source, call paths, and blast radius.",
 	"Don't re-verify codegraph results with grep — results come from a full AST parse that is more accurate.",
 	"Don't reconstruct call flows by hand — name the endpoints in codegraph_explore and it finds the path.",
+	"Use concrete English symbol/module names — not Chinese, not file paths with .py/.ts.",
+	"If explore returns nothing, try 2-3 narrower symbol names before falling back to Read/Grep.",
 ];
 
 const NODE_GUIDELINES = [
@@ -64,14 +66,14 @@ function registerTools(pi: ExtensionAPI, codegraphPath: string) {
 		label: "CodeGraph Explore",
 		description:
 			"Explore indexed code: returns relevant source code with line numbers, call paths, and blast radius. " +
-			'Pass symbol names spanning a flow (e.g. "createOrder validateStock") or a natural-language question. ' +
+			'Pass symbol names spanning a flow, e.g. "createOrder validateStock". ' +
 			"Use this instead of Read/Grep for any indexed code.",
 		promptSnippet: "Explore indexed code: source, call paths, blast radius",
 		promptGuidelines: EXPLORE_GUIDELINES,
 		parameters: Type.Object({
 			query: Type.String({
 				description:
-					"Symbol names or a natural-language question about the code",
+					'Symbol names spanning a flow, e.g. "createOrder validateStock"',
 			}),
 		}),
 		async execute(_toolCallId, params, signal, _onUpdate, ctx) {
