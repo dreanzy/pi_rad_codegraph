@@ -11,12 +11,13 @@ const EXPLORE_GUIDELINES = [
 	"Use codegraph_explore before Read or Grep for any indexed code — one call returns source, call paths, and blast radius.",
 	"Don't re-verify codegraph results with grep — results come from a full AST parse that is more accurate.",
 	"Don't reconstruct call flows by hand — name the endpoints in codegraph_explore and it finds the path.",
-	"Use concrete English symbol/module names — not Chinese, not file paths with .py/.ts.",
+	"Use only English symbol/module names — not Chinese, not file paths with .py/.ts.",
 	"If explore returns nothing, try 2-3 narrower symbol names before falling back to Read/Grep.",
 ];
 
 const NODE_GUIDELINES = [
 	"Use codegraph_node instead of Read to get line-numbered source for a file or symbol — treat its output as already Read.",
+	'After codegraph_explore returns symbol names (e.g. "save_sku_xlsx (file.py:27)"), use codegraph_node to read the symbol source + call chain in one call instead of Read.',
 ];
 
 const NOT_INDEXED_MSG =
@@ -135,6 +136,110 @@ function registerTools(pi: ExtensionAPI, codegraphPath: string) {
 				args.push(params.name);
 
 				const output = await runCodegraph(args, ctx.cwd, signal);
+				return { content: [{ type: "text", text: output }], details: {} };
+			} catch (e: any) {
+				return {
+					content: [{ type: "text", text: `CodeGraph error: ${e.message}` }],
+					details: {},
+				};
+			}
+		},
+	});
+
+	const QUERY_GUIDELINES = [
+		'Use codegraph_query when you need to find a symbol but don\'t know its exact name — it does fuzzy search.',
+		'For known symbol names, prefer codegraph_explore or codegraph_node instead (they return more context).',
+	];
+
+	const SYNC_GUIDELINES = [
+		'Run codegraph_sync after significant code changes (git pull, branch switch, file edits) to keep the index fresh.',
+		'Sync is incremental and fast (seconds) — use it instead of a full re-index.',
+	];
+
+	pi.registerTool({
+		name: "codegraph_query",
+		label: "CodeGraph Query",
+		description:
+			"Search for symbols in the codebase. " +
+			'Fuzzy-matches symbol names — useful when you don\'t know the exact name. ' +
+			"Returns symbol locations and their kinds.",
+		promptSnippet: "Search symbols in the codebase",
+		promptGuidelines: QUERY_GUIDELINES,
+		parameters: Type.Object({
+			search: Type.String({
+				description: 'Symbol name to search, e.g. "save_sku" or "QinsilkSpider"',
+			}),
+		}),
+		async execute(_toolCallId, params, signal, _onUpdate, ctx) {
+			if (!hasIndex(ctx.cwd)) {
+				return {
+					content: [{ type: "text", text: NOT_INDEXED_MSG }],
+					details: {},
+				};
+			}
+
+			try {
+				const output = await runCodegraph(
+					["query", params.search],
+					ctx.cwd,
+					signal,
+				);
+				return { content: [{ type: "text", text: output }], details: {} };
+			} catch (e: any) {
+				return {
+					content: [{ type: "text", text: `CodeGraph error: ${e.message}` }],
+					details: {},
+				};
+			}
+		},
+	});
+
+	pi.registerTool({
+		name: "codegraph_status",
+		label: "CodeGraph Status",
+		description: "Show index status: symbol count, file count, last sync time. " + "Use before explore/node to check if the index is current.",
+		promptSnippet: "CodeGraph index status",
+		promptGuidelines: [],
+		parameters: Type.Object({}),
+		async execute(_toolCallId, _params, signal, _onUpdate, ctx) {
+			if (!hasIndex(ctx.cwd)) {
+				return {
+					content: [{ type: "text", text: NOT_INDEXED_MSG }],
+					details: {},
+				};
+			}
+
+			try {
+				const output = await runCodegraph(["status"], ctx.cwd, signal);
+				return { content: [{ type: "text", text: output }], details: {} };
+			} catch (e: any) {
+				return {
+					content: [{ type: "text", text: `CodeGraph error: ${e.message}` }],
+					details: {},
+				};
+			}
+		},
+	});
+
+	pi.registerTool({
+		name: "codegraph_sync",
+		label: "CodeGraph Sync",
+		description:
+			"Incrementally sync the code index after recent changes. Fast (seconds). " +
+			"Use after git pull, branch switch, or file edits to keep the index current.",
+		promptSnippet: "Sync code index incrementally",
+		promptGuidelines: SYNC_GUIDELINES,
+		parameters: Type.Object({}),
+		async execute(_toolCallId, _params, signal, _onUpdate, ctx) {
+			if (!hasIndex(ctx.cwd)) {
+				return {
+					content: [{ type: "text", text: NOT_INDEXED_MSG }],
+					details: {},
+				};
+			}
+
+			try {
+				const output = await runCodegraph(["sync"], ctx.cwd, signal);
 				return { content: [{ type: "text", text: output }], details: {} };
 			} catch (e: any) {
 				return {
