@@ -147,13 +147,8 @@ function registerTools(pi: ExtensionAPI, codegraphPath: string) {
 	});
 
 	const QUERY_GUIDELINES = [
-		'Use codegraph_query when you need to find a symbol but don\'t know its exact name — it does fuzzy search.',
-		'For known symbol names, prefer codegraph_explore or codegraph_node instead (they return more context).',
-	];
-
-	const SYNC_GUIDELINES = [
-		'Run codegraph_sync after significant code changes (git pull, branch switch, file edits) to keep the index fresh.',
-		'Sync is incremental and fast (seconds) — use it instead of a full re-index.',
+		"Use codegraph_query when you need to find a symbol but don't know its exact name — it does fuzzy search.",
+		"For known symbol names, prefer codegraph_explore or codegraph_node instead (they return more context).",
 	];
 
 	pi.registerTool({
@@ -161,13 +156,14 @@ function registerTools(pi: ExtensionAPI, codegraphPath: string) {
 		label: "CodeGraph Query",
 		description:
 			"Search for symbols in the codebase. " +
-			'Fuzzy-matches symbol names — useful when you don\'t know the exact name. ' +
+			"Fuzzy-matches symbol names — useful when you don't know the exact name. " +
 			"Returns symbol locations and their kinds.",
 		promptSnippet: "Search symbols in the codebase",
 		promptGuidelines: QUERY_GUIDELINES,
 		parameters: Type.Object({
 			search: Type.String({
-				description: 'Symbol name to search, e.g. "save_sku" or "QinsilkSpider"',
+				description:
+					'Symbol name to search, e.g. "save_sku" or "QinsilkSpider"',
 			}),
 		}),
 		async execute(_toolCallId, params, signal, _onUpdate, ctx) {
@@ -197,7 +193,9 @@ function registerTools(pi: ExtensionAPI, codegraphPath: string) {
 	pi.registerTool({
 		name: "codegraph_status",
 		label: "CodeGraph Status",
-		description: "Show index status: symbol count, file count, last sync time. " + "Use before explore/node to check if the index is current.",
+		description:
+			"Show index status: symbol count, file count, last sync time. " +
+			"Use before explore/node to check if the index is current.",
 		promptSnippet: "CodeGraph index status",
 		promptGuidelines: [],
 		parameters: Type.Object({}),
@@ -221,34 +219,6 @@ function registerTools(pi: ExtensionAPI, codegraphPath: string) {
 		},
 	});
 
-	pi.registerTool({
-		name: "codegraph_sync",
-		label: "CodeGraph Sync",
-		description:
-			"Incrementally sync the code index after recent changes. Fast (seconds). " +
-			"Use after git pull, branch switch, or file edits to keep the index current.",
-		promptSnippet: "Sync code index incrementally",
-		promptGuidelines: SYNC_GUIDELINES,
-		parameters: Type.Object({}),
-		async execute(_toolCallId, _params, signal, _onUpdate, ctx) {
-			if (!hasIndex(ctx.cwd)) {
-				return {
-					content: [{ type: "text", text: NOT_INDEXED_MSG }],
-					details: {},
-				};
-			}
-
-			try {
-				const output = await runCodegraph(["sync"], ctx.cwd, signal);
-				return { content: [{ type: "text", text: output }], details: {} };
-			} catch (e: any) {
-				return {
-					content: [{ type: "text", text: `CodeGraph error: ${e.message}` }],
-					details: {},
-				};
-			}
-		},
-	});
 }
 
 export default function codegraphExtension(pi: ExtensionAPI) {
