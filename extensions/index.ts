@@ -176,6 +176,22 @@ function registerTools(pi: ExtensionAPI, codegraphPath: string) {
 			: `CodeGraph error: ${(e as Error).message}`;
 		return { content: [{ type: "text" as const, text: msg }], details: {} };
 	}
+	/** Auto-sync if index has pending changes (skip status/sync tools to avoid recursion). */
+	async function ensureIndexSync(
+		cwd: string,
+		signal?: AbortSignal,
+	): Promise<void> {
+		try {
+			const out = await runCodegraph(["status", "--json"], cwd, signal);
+			const status = JSON.parse(out);
+			const p = status.pendingChanges;
+			if (p && (p.added > 0 || p.modified > 0 || p.removed > 0)) {
+				await runCodegraph(["sync", "-q"], cwd, signal);
+			}
+		} catch {
+			// Non-fatal: proceed without sync, the tool will surface relevant errors
+		}
+	}
 
 	async function toolExec(
 		buildArgs: () => string[],
@@ -189,7 +205,12 @@ function registerTools(pi: ExtensionAPI, codegraphPath: string) {
 			};
 		}
 		try {
-			const output = await runCodegraph(buildArgs(), ctx.cwd, signal);
+			const args = buildArgs();
+			// Auto-sync before non-status/non-sync tools
+			if (args[0] !== "status" && args[0] !== "sync") {
+				await ensureIndexSync(ctx.cwd, signal);
+			}
+			const output = await runCodegraph(args, ctx.cwd, signal);
 			return {
 				content: [{ type: "text" as const, text: output }],
 				details: {},
