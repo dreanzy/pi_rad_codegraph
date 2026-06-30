@@ -1,4 +1,4 @@
-import { execFile as execFileCb } from "node:child_process";
+import { execFile as execFileCb, execFileSync } from "node:child_process";
 import { accessSync, constants, existsSync } from "node:fs";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -6,6 +6,8 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 
 const execFile = promisify(execFileCb);
+
+// ---- Guidelines ----
 
 const EXPLORE_GUIDELINES = [
 	"Use codegraph_explore before Read or Grep for any indexed code — one call returns source, call paths, and blast radius.",
@@ -20,16 +22,60 @@ const NODE_GUIDELINES = [
 	'After codegraph_explore returns symbol names (e.g. "save_sku_xlsx (file.py:27)"), use codegraph_node to read the symbol source + call chain in one call instead of Read.',
 ];
 
+const FILES_GUIDELINES = [
+	"Use codegraph_files to explore project file structure before reading individual files.",
+	"Use --filter to narrow to a specific directory, --pattern for glob matching.",
+	"Use --format grouped to see symbols organized by file.",
+];
+
+const IMPACT_GUIDELINES = [
+	"Use codegraph_impact to understand the blast radius before refactoring or deleting a symbol.",
+	"Depth 1 = direct callers only. Depth 2 (default) = callers of callers.",
+];
+
+const QUERY_GUIDELINES = [
+	"Use codegraph_query when you need to find a symbol but don't know its exact name — it does fuzzy search.",
+	"For known symbol names, prefer codegraph_explore or codegraph_node instead (they return more context).",
+];
+
+// ---- Constants ----
+
 const NOT_INDEXED_MSG =
 	"This project does not have a .codegraph index. " +
 	"Run `codegraph init -i` in the project to enable CodeGraph. " +
 	"Until then, use Read/Grep for this project.";
 
+const MaxDiagnosticLength = 1000;
+
+// ---- Path & binary resolution ----
+
 function hasIndex(cwd: string): boolean {
 	return existsSync(path.join(cwd, ".codegraph"));
 }
 
-function resolveBinary(name: string): string | null {
+/** Normalize WSL (`/mnt/c/...`) and Git Bash (`/c/...`) paths to Windows. */
+export function normalizeWindowsPath(inputPath: string): string {
+	let normalized = inputPath.trim();
+	if (process.platform !== "win32") return normalized;
+
+	const wslMatch = normalized.match(/^\/mnt\/([a-zA-Z])\/(.*)$/);
+	if (wslMatch) {
+		normalized =
+			wslMatch[1].toUpperCase() + ":\\" + wslMatch[2].replace(/\//g, "\\");
+	}
+
+	const gitBashMatch = normalized.match(/^\/([a-zA-Z])\/(.*)$/);
+	if (gitBashMatch) {
+		normalized =
+			gitBashMatch[1].toUpperCase() +
+			":\\" +
+			gitBashMatch[2].replace(/\//g, "\\");
+	}
+
+	return normalized;
+}
+
+function resolveOnPath(name: string): string | null {
 	const dirs = (process.env.PATH || "").split(path.delimiter);
 	const exts =
 		process.platform === "win32"
@@ -47,21 +93,113 @@ function resolveBinary(name: string): string | null {
 	return null;
 }
 
+/** On Windows, use PowerShell command discovery as fallback when PATH enumeration fails. */
+function resolveOnWindowsPowerShell(name: string): string | null {
+	if (process.platform !== "win32") return null;
+	try {
+		const script = `& {
+	param([string]$Name)
+	$ErrorActionPreference = 'Stop';
+	$cmd = Get-Command $Name -CommandType Application -ErrorAction Stop | Select-Object -First 1;
+	if (-not $cmd) { exit 1; }
+	Write-Output $cmd.Source;
+	exit 0;
+}`;
+		const stdout = execFileSync(
+			"powershell.exe",
+			[
+				"-NoProfile",
+				"-NonInteractive",
+				"-ExecutionPolicy",
+				"Bypass",
+				"-Command",
+				script,
+				name,
+			],
+			{ timeout: 5000, encoding: "utf-8" },
+		);
+		const resolved = stdout.trim();
+		return resolved || null;
+	} catch {
+		return null;
+	}
+}
+
+function resolveBinary(name: string): string | null {
+	return resolveOnPath(name) ?? resolveOnWindowsPowerShell(name);
+}
+
+// ---- Sensitive info filtering ----
+
+/** Redact credentials/tokens from diagnostic output. */
+export function sanitizeDiagnostic(value: string): string {
+	const withoutAnsi = value.replace(/\u001b\[[0-9;]*m/g, "");
+	const redacted = withoutAnsi
+		.replace(
+			/\b([A-Z0-9_]*(?:TOKEN|SECRET|PASSWORD|API_KEY|APIKEY|AUTH)[A-Z0-9_]*=)\S+/gi,
+			"$1[redacted]",
+		)
+		.replace(/\bBearer\s+[A-Za-z0-9._~+/=-]+/gi, "Bearer [redacted]")
+		.replace(
+			/--(?:token|secret|password|api-key|apikey|otp)(?:=|\s+)\S+/gi,
+			"--[redacted]",
+		);
+	return redacted.length > MaxDiagnosticLength
+		? `${redacted.slice(0, MaxDiagnosticLength)}...`
+		: redacted;
+}
+
+// ---- Tool registration ----
+
 function registerTools(pi: ExtensionAPI, codegraphPath: string) {
 	async function runCodegraph(
 		args: string[],
 		cwd: string,
 		signal?: AbortSignal,
 	): Promise<string> {
-		const { stdout } = await execFile(codegraphPath, args, {
+		const { stdout, stderr } = await execFile(codegraphPath, args, {
 			cwd,
 			timeout: 30_000,
 			signal,
 			shell: true,
 		});
-		return stdout as string;
+		const out = String(stdout);
+		const filtered = stderr ? sanitizeDiagnostic(String(stderr)) : "";
+		return filtered ? `${out}\n--- stderr ---\n${filtered}` : out;
 	}
 
+	function wrapError(e: any) {
+		const stderr = (e as any).stderr as string | undefined;
+		const stderrInfo = stderr ? sanitizeDiagnostic(stderr) : "";
+		const msg = stderrInfo
+			? `CodeGraph error (exit ${(e as any).code ?? "?"}): ${stderrInfo}`
+			: `CodeGraph error: ${(e as Error).message}`;
+		return { content: [{ type: "text" as const, text: msg }], details: {} };
+	}
+
+	async function toolExec(
+		buildArgs: () => string[],
+		ctx: any,
+		signal?: AbortSignal,
+	) {
+		if (!hasIndex(ctx.cwd)) {
+			return {
+				content: [{ type: "text" as const, text: NOT_INDEXED_MSG }],
+				details: {},
+			};
+		}
+		try {
+			const output = await runCodegraph(buildArgs(), ctx.cwd, signal);
+			return {
+				content: [{ type: "text" as const, text: output }],
+				details: {},
+			};
+		} catch (e: any) {
+			return wrapError(e);
+		}
+	}
+
+	// ---- codegraph_explore ----
 	pi.registerTool({
 		name: "codegraph_explore",
 		label: "CodeGraph Explore",
@@ -78,29 +216,11 @@ function registerTools(pi: ExtensionAPI, codegraphPath: string) {
 			}),
 		}),
 		async execute(_toolCallId, params, signal, _onUpdate, ctx) {
-			if (!hasIndex(ctx.cwd)) {
-				return {
-					content: [{ type: "text", text: NOT_INDEXED_MSG }],
-					details: {},
-				};
-			}
-
-			try {
-				const output = await runCodegraph(
-					["explore", params.query],
-					ctx.cwd,
-					signal,
-				);
-				return { content: [{ type: "text", text: output }], details: {} };
-			} catch (e: any) {
-				return {
-					content: [{ type: "text", text: `CodeGraph error: ${e.message}` }],
-					details: {},
-				};
-			}
+			return toolExec(() => ["explore", params.query], ctx, signal);
 		},
 	});
 
+	// ---- codegraph_node ----
 	pi.registerTool({
 		name: "codegraph_node",
 		label: "CodeGraph Node",
@@ -121,36 +241,22 @@ function registerTools(pi: ExtensionAPI, codegraphPath: string) {
 			),
 		}),
 		async execute(_toolCallId, params, signal, _onUpdate, ctx) {
-			if (!hasIndex(ctx.cwd)) {
-				return {
-					content: [{ type: "text", text: NOT_INDEXED_MSG }],
-					details: {},
-				};
-			}
-
-			try {
-				const args = ["node"];
-				if (params.file) args.push("--file");
-				if (params.offset) args.push("--offset", String(params.offset));
-				if (params.limit) args.push("--limit", String(params.limit));
-				args.push(params.name);
-
-				const output = await runCodegraph(args, ctx.cwd, signal);
-				return { content: [{ type: "text", text: output }], details: {} };
-			} catch (e: any) {
-				return {
-					content: [{ type: "text", text: `CodeGraph error: ${e.message}` }],
-					details: {},
-				};
-			}
+			return toolExec(
+				() => {
+					const args = ["node"];
+					if (params.file) args.push("--file");
+					if (params.offset) args.push("--offset", String(params.offset));
+					if (params.limit) args.push("--limit", String(params.limit));
+					args.push(params.name);
+					return args;
+				},
+				ctx,
+				signal,
+			);
 		},
 	});
 
-	const QUERY_GUIDELINES = [
-		"Use codegraph_query when you need to find a symbol but don't know its exact name — it does fuzzy search.",
-		"For known symbol names, prefer codegraph_explore or codegraph_node instead (they return more context).",
-	];
-
+	// ---- codegraph_query ----
 	pi.registerTool({
 		name: "codegraph_query",
 		label: "CodeGraph Query",
@@ -167,29 +273,11 @@ function registerTools(pi: ExtensionAPI, codegraphPath: string) {
 			}),
 		}),
 		async execute(_toolCallId, params, signal, _onUpdate, ctx) {
-			if (!hasIndex(ctx.cwd)) {
-				return {
-					content: [{ type: "text", text: NOT_INDEXED_MSG }],
-					details: {},
-				};
-			}
-
-			try {
-				const output = await runCodegraph(
-					["query", params.search],
-					ctx.cwd,
-					signal,
-				);
-				return { content: [{ type: "text", text: output }], details: {} };
-			} catch (e: any) {
-				return {
-					content: [{ type: "text", text: `CodeGraph error: ${e.message}` }],
-					details: {},
-				};
-			}
+			return toolExec(() => ["query", params.search], ctx, signal);
 		},
 	});
 
+	// ---- codegraph_status ----
 	pi.registerTool({
 		name: "codegraph_status",
 		label: "CodeGraph Status",
@@ -200,28 +288,107 @@ function registerTools(pi: ExtensionAPI, codegraphPath: string) {
 		promptGuidelines: [],
 		parameters: Type.Object({}),
 		async execute(_toolCallId, _params, signal, _onUpdate, ctx) {
-			if (!hasIndex(ctx.cwd)) {
-				return {
-					content: [{ type: "text", text: NOT_INDEXED_MSG }],
-					details: {},
-				};
-			}
+			return toolExec(() => ["status"], ctx, signal);
+		},
+	});
 
-			try {
-				const output = await runCodegraph(["status"], ctx.cwd, signal);
-				return { content: [{ type: "text", text: output }], details: {} };
-			} catch (e: any) {
-				return {
-					content: [{ type: "text", text: `CodeGraph error: ${e.message}` }],
-					details: {},
-				};
-			}
+	// ---- codegraph_files ----
+	pi.registerTool({
+		name: "codegraph_files",
+		label: "CodeGraph Files",
+		description:
+			"Show project file structure from the CodeGraph index. " +
+			"Returns a tree, flat list, or symbols-grouped-by-file view. " +
+			"Supports directory and glob filtering.",
+		promptSnippet: "Project file structure from the code index",
+		promptGuidelines: FILES_GUIDELINES,
+		parameters: Type.Object({
+			filter: Type.Optional(
+				Type.String({
+					description:
+						"Filter to files under this directory (root-relative, e.g. src/components)",
+				}),
+			),
+			pattern: Type.Optional(
+				Type.String({
+					description: 'Glob pattern to match files, e.g. "*.ts"',
+				}),
+			),
+			format: Type.Optional(
+				Type.Union(
+					[Type.Literal("tree"), Type.Literal("flat"), Type.Literal("grouped")],
+					{ default: "tree" },
+				),
+			),
+			maxDepth: Type.Optional(
+				Type.Number({
+					description: "Maximum directory depth for tree format",
+				}),
+			),
+			includeMetadata: Type.Optional(
+				Type.Boolean({
+					description:
+						"Include file metadata (language, symbol count). Default: true",
+					default: true,
+				}),
+			),
+		}),
+		async execute(_toolCallId, params, signal, _onUpdate, ctx) {
+			return toolExec(
+				() => {
+					const args = ["files"];
+					if (params.filter) args.push("--filter", params.filter);
+					if (params.pattern) args.push("--pattern", params.pattern);
+					if (params.format) args.push("--format", params.format);
+					if (params.maxDepth)
+						args.push("--max-depth", String(params.maxDepth));
+					if (params.includeMetadata === false) args.push("--no-metadata");
+					return args;
+				},
+				ctx,
+				signal,
+			);
+		},
+	});
+
+	// ---- codegraph_impact ----
+	pi.registerTool({
+		name: "codegraph_impact",
+		label: "CodeGraph Impact",
+		description:
+			"Analyze what code is affected by changing a symbol. " +
+			"Recursively finds direct and indirect callers, showing the blast radius. " +
+			"Use before refactoring to understand downstream impact.",
+		promptSnippet: "Analyze impact radius of changing a symbol",
+		promptGuidelines: IMPACT_GUIDELINES,
+		parameters: Type.Object({
+			symbol: Type.String({
+				description: "Symbol name to analyze impact for",
+			}),
+			depth: Type.Optional(
+				Type.Number({
+					description:
+						"Traversal depth (1 = direct callers only, 2 = callers of callers). Default: 2",
+					default: 2,
+				}),
+			),
+		}),
+		async execute(_toolCallId, params, signal, _onUpdate, ctx) {
+			return toolExec(
+				() => {
+					const args = ["impact", params.symbol];
+					if (params.depth) args.push("--depth", String(params.depth));
+					return args;
+				},
+				ctx,
+				signal,
+			);
 		},
 	});
 }
 
 export default function codegraphExtension(pi: ExtensionAPI) {
-	pi.on("session_start", async (_event, ctx) => {
+	pi.on("session_start", (_event, ctx) => {
 		if (!hasIndex(ctx.cwd)) return;
 
 		const codegraphPath = resolveBinary("codegraph");

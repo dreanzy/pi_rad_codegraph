@@ -23,12 +23,16 @@ pi install git:github.com/dreanzy/pi_rad_codegraph
 
 ## How it works
 
-This extension registers two custom tools that the LLM can call directly, replacing Read/Grep for indexed code:
+This extension registers six custom tools that the LLM can call directly, replacing Read/Grep for indexed code:
 
 | Tool | Purpose | Parameters |
 |------|---------|------------|
-| `codegraph_explore` | Primary exploration: returns source + call paths + blast radius for a query | `query` (string) |
+| `codegraph_explore` | Primary exploration: returns source + call paths + blast radius | `query` (string) |
 | `codegraph_node` | Read a file or symbol: line-numbered source + caller/callee trail | `name`, `file?`, `offset?`, `limit?` |
+| `codegraph_query` | Fuzzy symbol search (when exact name is unknown) | `search` (string) |
+| `codegraph_status` | Index health and sync status | none |
+| `codegraph_files` | Project file structure: tree/flat/grouped view | `filter?`, `pattern?`, `format?`, `maxDepth?`, `includeMetadata?` |
+| `codegraph_impact` | Blast radius analysis before refactoring | `symbol` (string), `depth?` |
 
 **Tool registration is gated on `.codegraph` existence.** If the project has no `.codegraph` index, no tools are registered — zero token waste. If the index is later initialized, use `/reload` to pick it up.
 
@@ -38,6 +42,8 @@ Anti-pattern guidance is embedded in the tool descriptions and system prompt Gui
 - Don't re-verify codegraph results with grep
 - Don't reconstruct call flows by hand
 - `codegraph_node` output is safe to Edit from — treat as already Read
+- `codegraph_files` to explore project structure before reading files
+- `codegraph_impact` before refactoring a symbol
 
 ## Requirements
 

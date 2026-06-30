@@ -4,7 +4,7 @@
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![English](https://img.shields.io/badge/lang-English-blue)](README.md)
 
-为 [pi](https://pi.dev) Agent 注册 `codegraph_explore` 和 `codegraph_node` 两个自定义工具——项目下有 `.codegraph` 索引时自动启用。
+为 [pi](https://pi.dev) Agent 注册六个自定义工具——项目下有 `.codegraph` 索引时自动启用。
 
 ## 安装
 
@@ -29,6 +29,10 @@ pi install git:github.com/dreanzy/pi_rad_codegraph
 |------|------|------|
 | `codegraph_explore` | 主入口：查询源码 + 调用路径 + 波及范围 | `query`（字符串） |
 | `codegraph_node` | 读文件/符号：行号源码 + 调用者/被调用者链 | `name`, `file?`, `offset?`, `limit?` |
+| `codegraph_query` | 模糊搜索符号（不确定确切名称时） | `search`（字符串） |
+| `codegraph_status` | 索引健康度和同步状态 | 无 |
+| `codegraph_files` | 项目文件结构：树/平铺/按文件分组 | `filter?`, `pattern?`, `format?`, `maxDepth?`, `includeMetadata?` |
+| `codegraph_impact` | 重构前的波及范围分析 | `symbol`（字符串）, `depth?` |
 
 **工具注册取决于 `.codegraph` 是否存在。** 无索引的项目不会注册任何工具——零 token 浪费。索引初始化后需 `/reload` 才会加载工具。
 
@@ -38,6 +42,8 @@ pi install git:github.com/dreanzy/pi_rad_codegraph
 - 不要用 grep 验证 codegraph 的结果
 - 不要手工重建调用流程
 - `codegraph_node` 输出的行号源码可直接用于 Edit，视为已 Read
+- `codegraph_files` 先用来探索项目结构再读文件
+- `codegraph_impact` 重构某个符号前先用它分析波及范围
 
 ## 环境要求
 
