@@ -23,7 +23,7 @@ pi install git:github.com/dreanzy/pi_rad_codegraph
 
 ## 工作原理
 
-本扩展注册两个自定义工具，LLM 可直接调用，替代 Read/Grep：
+本扩展注册六个自定义工具，LLM 可直接调用，替代 Read/Grep：
 
 | 工具 | 用途 | 参数 |
 |------|------|------|

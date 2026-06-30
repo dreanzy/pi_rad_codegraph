@@ -1,4 +1,4 @@
-import { execFile as execFileCb, execFileSync } from "node:child_process";
+import { execFile as execFileCb } from "node:child_process";
 import { accessSync, constants, existsSync } from "node:fs";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -53,28 +53,6 @@ function hasIndex(cwd: string): boolean {
 	return existsSync(path.join(cwd, ".codegraph"));
 }
 
-/** Normalize WSL (`/mnt/c/...`) and Git Bash (`/c/...`) paths to Windows. */
-export function normalizeWindowsPath(inputPath: string): string {
-	let normalized = inputPath.trim();
-	if (process.platform !== "win32") return normalized;
-
-	const wslMatch = normalized.match(/^\/mnt\/([a-zA-Z])\/(.*)$/);
-	if (wslMatch) {
-		normalized =
-			wslMatch[1].toUpperCase() + ":\\" + wslMatch[2].replace(/\//g, "\\");
-	}
-
-	const gitBashMatch = normalized.match(/^\/([a-zA-Z])\/(.*)$/);
-	if (gitBashMatch) {
-		normalized =
-			gitBashMatch[1].toUpperCase() +
-			":\\" +
-			gitBashMatch[2].replace(/\//g, "\\");
-	}
-
-	return normalized;
-}
-
 function resolveOnPath(name: string): string | null {
 	const dirs = (process.env.PATH || "").split(path.delimiter);
 	const exts =
@@ -93,40 +71,8 @@ function resolveOnPath(name: string): string | null {
 	return null;
 }
 
-/** On Windows, use PowerShell command discovery as fallback when PATH enumeration fails. */
-function resolveOnWindowsPowerShell(name: string): string | null {
-	if (process.platform !== "win32") return null;
-	try {
-		const script = `& {
-	param([string]$Name)
-	$ErrorActionPreference = 'Stop';
-	$cmd = Get-Command $Name -CommandType Application -ErrorAction Stop | Select-Object -First 1;
-	if (-not $cmd) { exit 1; }
-	Write-Output $cmd.Source;
-	exit 0;
-}`;
-		const stdout = execFileSync(
-			"powershell.exe",
-			[
-				"-NoProfile",
-				"-NonInteractive",
-				"-ExecutionPolicy",
-				"Bypass",
-				"-Command",
-				script,
-				name,
-			],
-			{ timeout: 5000, encoding: "utf-8" },
-		);
-		const resolved = stdout.trim();
-		return resolved || null;
-	} catch {
-		return null;
-	}
-}
-
 function resolveBinary(name: string): string | null {
-	return resolveOnPath(name) ?? resolveOnWindowsPowerShell(name);
+	return resolveOnPath(name);
 }
 
 // ---- Sensitive info filtering ----
@@ -181,15 +127,11 @@ function registerTools(pi: ExtensionAPI, codegraphPath: string) {
 		cwd: string,
 		signal?: AbortSignal,
 	): Promise<void> {
-		try {
-			const out = await runCodegraph(["status", "--json"], cwd, signal);
-			const status = JSON.parse(out);
-			const p = status.pendingChanges;
-			if (p && (p.added > 0 || p.modified > 0 || p.removed > 0)) {
-				await runCodegraph(["sync", "-q"], cwd, signal);
-			}
-		} catch {
-			// Non-fatal: proceed without sync, the tool will surface relevant errors
+		const out = await runCodegraph(["status", "--json"], cwd, signal);
+		const status = JSON.parse(out);
+		const p = status.pendingChanges;
+		if (p && (p.added > 0 || p.modified > 0 || p.removed > 0)) {
+			await runCodegraph(["sync", "-q"], cwd, signal);
 		}
 	}
 

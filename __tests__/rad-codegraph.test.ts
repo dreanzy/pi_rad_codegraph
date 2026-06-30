@@ -11,9 +11,6 @@ vi.mock("node:child_process", () => ({
 	execFile: vi.fn((_path, _args, _opts, cb: Function) => {
 		cb(null, { stdout: "", stderr: "" });
 	}),
-	execFileSync: vi.fn(() => {
-		throw new Error("not found");
-	}),
 }));
 
 import { accessSync, existsSync } from "node:fs";
@@ -88,74 +85,6 @@ describe("registration", () => {
 		await sessionStartHandler!({}, { cwd: "/test/project" });
 
 		expect(mockPi.registerTool).not.toHaveBeenCalled();
-	});
-});
-
-// ── normalizeWindowsPath ────────────────────────────────────────────
-
-describe("normalizeWindowsPath", () => {
-	async function getFn() {
-		const mod = await import("../extensions/index.js");
-		return mod.normalizeWindowsPath;
-	}
-
-	it("normalizes WSL /mnt/c/... paths on Windows", async () => {
-		const fn = await getFn();
-		const orig = process.platform;
-		Object.defineProperty(process, "platform", { value: "win32" });
-		try {
-			expect(fn("/mnt/c/Users/dev/project")).toBe("C:\\Users\\dev\\project");
-			expect(fn("/mnt/d/work/src")).toBe("D:\\work\\src");
-		} finally {
-			Object.defineProperty(process, "platform", { value: orig });
-		}
-	});
-
-	it("normalizes Git Bash /c/... paths on Windows", async () => {
-		const fn = await getFn();
-		const orig = process.platform;
-		Object.defineProperty(process, "platform", { value: "win32" });
-		try {
-			expect(fn("/c/Users/dev/project")).toBe("C:\\Users\\dev\\project");
-			expect(fn("/d/work/src")).toBe("D:\\work\\src");
-		} finally {
-			Object.defineProperty(process, "platform", { value: orig });
-		}
-	});
-
-	it("does not modify non-Windows paths on Win32", async () => {
-		const fn = await getFn();
-		const orig = process.platform;
-		Object.defineProperty(process, "platform", { value: "win32" });
-		try {
-			expect(fn("/Users/vndv/project")).toBe("/Users/vndv/project");
-			expect(fn("C:\\Windows\\path")).toBe("C:\\Windows\\path");
-		} finally {
-			Object.defineProperty(process, "platform", { value: orig });
-		}
-	});
-
-	it("preserves paths on non-Windows platforms", async () => {
-		const fn = await getFn();
-		const orig = process.platform;
-		Object.defineProperty(process, "platform", { value: "darwin" });
-		try {
-			expect(fn("/Users/dev/project")).toBe("/Users/dev/project");
-			expect(fn("/mnt/c/test")).toBe("/mnt/c/test"); // no transform on mac
-		} finally {
-			Object.defineProperty(process, "platform", { value: orig });
-		}
-	});
-
-	it("trims whitespace", async () => {
-		const fn = await getFn();
-		const orig = process.platform;
-		Object.defineProperty(process, "platform", { value: "win32" });
-		try {
-			expect(fn("  C:\\test  ")).toBe("C:\\test");
-		} finally {
-			Object.defineProperty(process, "platform", { value: orig });
-		}
 	});
 });
 
