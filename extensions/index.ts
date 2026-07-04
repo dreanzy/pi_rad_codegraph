@@ -4,6 +4,8 @@ import path from "node:path";
 import { promisify } from "node:util";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
+import { Text } from "@earendil-works/pi-tui";
+import { keyHint } from "@earendil-works/pi-coding-agent";
 
 const execFile = promisify(execFileCb);
 
@@ -95,6 +97,36 @@ export function sanitizeDiagnostic(value: string): string {
 		: redacted;
 }
 
+/** Shared renderResult: show truncated output by default, full on Ctrl+O expand. */
+function makeRenderResult(maxLines = 10) {
+	return (
+		result: any,
+		{ expanded, isPartial }: { expanded: boolean; isPartial: boolean },
+		theme: any,
+		_context: any,
+	) => {
+		if (isPartial) {
+			return new Text(theme.fg("warning", "Processing..."), 0, 0);
+		}
+		const text =
+			result.content[0]?.type === "text" ? result.content[0].text : "";
+		if (expanded) {
+			return new Text(text, 0, 0);
+		}
+		const lines = text.split("\n");
+		if (lines.length <= maxLines) {
+			return new Text(text, 0, 0);
+		}
+		const truncated = lines.slice(0, maxLines).join("\n");
+		const remaining = lines.length - maxLines;
+		const hint = keyHint("app.tools.expand", "expand");
+		return new Text(
+			`${truncated}\n${theme.fg("dim", `... ${remaining} more lines (${hint})`)}`,
+			0,
+			0,
+		);
+	};
+}
 // ---- Tool registration ----
 
 function registerTools(pi: ExtensionAPI, codegraphPath: string) {
@@ -181,6 +213,7 @@ function registerTools(pi: ExtensionAPI, codegraphPath: string) {
 		async execute(_toolCallId, params, signal, _onUpdate, ctx) {
 			return toolExec(() => ["explore", params.query], ctx, signal);
 		},
+		renderResult: makeRenderResult(10),
 	});
 
 	// ---- codegraph_node ----
@@ -217,6 +250,7 @@ function registerTools(pi: ExtensionAPI, codegraphPath: string) {
 				signal,
 			);
 		},
+		renderResult: makeRenderResult(15),
 	});
 
 	// ---- codegraph_query ----
@@ -238,6 +272,7 @@ function registerTools(pi: ExtensionAPI, codegraphPath: string) {
 		async execute(_toolCallId, params, signal, _onUpdate, ctx) {
 			return toolExec(() => ["query", params.search], ctx, signal);
 		},
+		renderResult: makeRenderResult(10),
 	});
 
 	// ---- codegraph_status ----
@@ -253,6 +288,7 @@ function registerTools(pi: ExtensionAPI, codegraphPath: string) {
 		async execute(_toolCallId, _params, signal, _onUpdate, ctx) {
 			return toolExec(() => ["status"], ctx, signal);
 		},
+		renderResult: makeRenderResult(10),
 	});
 
 	// ---- codegraph_files ----
@@ -312,6 +348,7 @@ function registerTools(pi: ExtensionAPI, codegraphPath: string) {
 				signal,
 			);
 		},
+		renderResult: makeRenderResult(15),
 	});
 
 	// ---- codegraph_impact ----
@@ -347,6 +384,7 @@ function registerTools(pi: ExtensionAPI, codegraphPath: string) {
 				signal,
 			);
 		},
+		renderResult: makeRenderResult(10),
 	});
 }
 
