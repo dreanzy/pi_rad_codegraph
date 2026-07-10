@@ -43,9 +43,8 @@ const QUERY_GUIDELINES = [
 // ---- Constants ----
 
 const NOT_INDEXED_MSG =
-	"This project does not have a .codegraph index. " +
-	"Run `codegraph init -i` in the project to enable CodeGraph. " +
-	"Until then, use Read/Grep for this project.";
+	"No .codegraph index and auto-init failed. Run `codegraph init` in the project root, " +
+	"then use Read/Grep for this project.";
 
 const MaxDiagnosticLength = 1000;
 
@@ -154,17 +153,56 @@ function registerTools(pi: ExtensionAPI, codegraphPath: string) {
 			: `CodeGraph error: ${(e as Error).message}`;
 		return { content: [{ type: "text" as const, text: msg }], details: {} };
 	}
-	/** Auto-sync if index has pending changes (skip status/sync tools to avoid recursion). */
-	async function ensureIndexSync(
+	/** Ensure index exists and is healthy: init → status → rebuild/sync. */
+	async function ensureIndexReady(
 		cwd: string,
 		signal?: AbortSignal,
-	): Promise<void> {
-		const out = await runCodegraph(["status", "--json"], cwd, signal);
-		const status = JSON.parse(out);
+	): Promise<boolean> {
+		// 1. No index → first-time init
+		if (!hasIndex(cwd)) {
+			try {
+				await runCodegraph(["init"], cwd, signal);
+				return true;
+			} catch {
+				return false;
+			}
+		}
+
+		// 2. Check index health via status
+		let raw: string;
+		try {
+			raw = await runCodegraph(["status", "--json"], cwd, signal);
+		} catch {
+			// status command failed → index may be corrupt → rebuild
+			await runCodegraph(["index", "-q"], cwd, signal);
+			return true;
+		}
+
+		let status;
+		try {
+			status = JSON.parse(raw);
+		} catch {
+			// Non-JSON output → index unhealthy → rebuild
+			await runCodegraph(["index", "-q"], cwd, signal);
+			return true;
+		}
+
+		// 3. Stale index (state partial/failed or extraction version outdated) → rebuild
+		if (
+			(status.index?.state && status.index.state !== "complete") ||
+			status.reindexRecommended
+		) {
+			await runCodegraph(["index", "-q"], cwd, signal);
+			return true;
+		}
+
+		// 5. Incremental file changes → sync
 		const p = status.pendingChanges;
 		if (p && (p.added > 0 || p.modified > 0 || p.removed > 0)) {
 			await runCodegraph(["sync", "-q"], cwd, signal);
 		}
+
+		return true;
 	}
 
 	async function toolExec(
@@ -172,17 +210,16 @@ function registerTools(pi: ExtensionAPI, codegraphPath: string) {
 		ctx: any,
 		signal?: AbortSignal,
 	) {
-		if (!hasIndex(ctx.cwd)) {
-			return {
-				content: [{ type: "text" as const, text: NOT_INDEXED_MSG }],
-				details: {},
-			};
-		}
 		try {
 			const args = buildArgs();
 			// Auto-sync before non-status/non-sync tools
 			if (args[0] !== "status" && args[0] !== "sync") {
-				await ensureIndexSync(ctx.cwd, signal);
+				if (!(await ensureIndexReady(ctx.cwd, signal))) {
+					return {
+						content: [{ type: "text" as const, text: NOT_INDEXED_MSG }],
+						details: {},
+					};
+				}
 			}
 			const output = await runCodegraph(args, ctx.cwd, signal);
 			return {
@@ -389,9 +426,7 @@ function registerTools(pi: ExtensionAPI, codegraphPath: string) {
 }
 
 export default function codegraphExtension(pi: ExtensionAPI) {
-	pi.on("session_start", (_event, ctx) => {
-		if (!hasIndex(ctx.cwd)) return;
-
+	pi.on("session_start", (_event, _ctx) => {
 		const codegraphPath = resolveBinary("codegraph");
 		if (!codegraphPath) return;
 

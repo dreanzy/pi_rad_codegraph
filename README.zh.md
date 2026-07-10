@@ -4,7 +4,7 @@
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![English](https://img.shields.io/badge/lang-English-blue)](README.md)
 
-为 [pi](https://pi.dev) Agent 注册六个自定义工具——项目下有 `.codegraph` 索引时自动启用。
+为 [pi](https://pi.dev) Agent 注册六个自定义 CodeGraph 工具。首次使用时自动初始化索引，无需预先创建 `.codegraph`。
 
 ## 安装
 
@@ -12,7 +12,7 @@
 # 先确保已安装 CodeGraph CLI 并初始化项目索引
 npm install -g @colbymchenry/codegraph
 cd /path/to/project
-codegraph init -i
+codegraph init
 
 # 安装 rad-codegraph
 pi install git:github.com/dreanzy/pi_rad_codegraph
@@ -34,7 +34,7 @@ pi install git:github.com/dreanzy/pi_rad_codegraph
 | `codegraph_files` | 项目文件结构：树/平铺/按文件分组 | `filter?`, `pattern?`, `format?`, `maxDepth?`, `includeMetadata?` |
 | `codegraph_impact` | 重构前的波及范围分析 | `symbol`（字符串）, `depth?` |
 
-**工具注册取决于 `.codegraph` 是否存在。** 无索引的项目不会注册任何工具——零 token 浪费。索引初始化后需 `/reload` 才会加载工具。
+**只要 `codegraph` 二进制在 PATH 上就注册工具。** 无索引时首次调用自动初始化。索引过时（`reindexRecommended`）/不完整（partial/failed）时自动重建，有文件变更时自动增量同步。
 
 反模式引导嵌入在工具描述和 system prompt 的 Guidelines 段中：
 
@@ -49,7 +49,7 @@ pi install git:github.com/dreanzy/pi_rad_codegraph
 
 - Node.js >= 22.19.0
 - CodeGraph CLI（`npm install -g @colbymchenry/codegraph`）
-- 项目已初始化（`codegraph init -i`）
+- 无需手动初始化——首次使用自动创建
 
 ## 开发
 

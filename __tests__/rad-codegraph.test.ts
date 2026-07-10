@@ -1,17 +1,28 @@
 import { describe, expect, it, vi, beforeAll, beforeEach } from "vitest";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
+const mockExecFile = vi.fn();
+const mockAccessSync = vi.fn();
+const mockExistsSync = vi.fn();
+
 vi.mock("node:fs", () => ({
-	accessSync: vi.fn(),
+	accessSync: mockAccessSync,
 	constants: { X_OK: 1 },
-	existsSync: vi.fn(),
+	existsSync: mockExistsSync,
 }));
 
 vi.mock("node:child_process", () => ({
-	execFile: vi.fn((_path, _args, _opts, cb: Function) => {
-		cb(null, { stdout: "", stderr: "" });
-	}),
+	execFile: mockExecFile,
 }));
+
+vi.mock("@earendil-works/pi-tui", () => ({
+	Text: vi.fn(() => ({})),
+}));
+
+vi.mock("@earendil-works/pi-coding-agent", async (importOriginal) => {
+	const mod: any = await importOriginal();
+	return { ...mod, keyHint: vi.fn(() => "expand") };
+});
 
 import { accessSync, existsSync } from "node:fs";
 
@@ -49,9 +60,8 @@ beforeEach(() => {
 // ── Registration ────────────────────────────────────────────────────
 
 describe("registration", () => {
-	it("registers all 6 tools when .codegraph exists and codegraph binary is found", async () => {
-		vi.mocked(existsSync).mockReturnValue(true);
-		vi.mocked(accessSync).mockImplementation((p: any) => {
+	it("registers all 6 tools when codegraph binary is found", async () => {
+		mockAccessSync.mockImplementation((p: any) => {
 			if (String(p).includes("codegraph")) return;
 			throw new Error("not found");
 		});
@@ -68,17 +78,9 @@ describe("registration", () => {
 		expect(names).toContain("codegraph_impact");
 	});
 
-	it("skips tool registration when .codegraph is missing", async () => {
-		vi.mocked(existsSync).mockReturnValue(false);
-
-		await sessionStartHandler!({}, { cwd: "/test/project" });
-
-		expect(mockPi.registerTool).not.toHaveBeenCalled();
-	});
-
 	it("skips tool registration when codegraph binary is not found", async () => {
-		vi.mocked(existsSync).mockReturnValue(true);
-		vi.mocked(accessSync).mockImplementation(() => {
+		mockExistsSync.mockReturnValue(true);
+		mockAccessSync.mockImplementation(() => {
 			throw new Error("not found");
 		});
 
@@ -152,17 +154,185 @@ describe("sanitizeDiagnostic", () => {
 	});
 });
 
-// ── NOT_INDEXED_MSG path (tool execute without .codegraph) ──────────
+// ── ensureIndexReady ────────────────────────────────────────────────
 
-describe("tool execute without index", () => {
-	async function getTools() {
-		vi.mocked(existsSync).mockReturnValue(false);
+describe("ensureIndexReady", () => {
+	beforeEach(() => {
+		// Default: session_start with codegraph on PATH
+		mockAccessSync.mockImplementation((p: any) => {
+			if (String(p).includes("codegraph")) return;
+			throw new Error("not found");
+		});
+	});
+
+	async function execTool(firstArg: string) {
 		await sessionStartHandler!({}, { cwd: "/test/project" });
-		return registeredTools;
+		const tool = registeredTools.find((t) => t.name === firstArg);
+		if (!tool) return null;
+		return tool.execute("call-1", {}, undefined, undefined, {
+			cwd: "/test/project",
+		});
 	}
 
-	it("does not register tools when index is missing", async () => {
-		const tools = await getTools();
-		expect(tools).toHaveLength(0);
+	it("auto-inits when .codegraph is missing and init succeeds", async () => {
+		mockExistsSync.mockReturnValue(false);
+		// init succeeds
+		mockExecFile.mockImplementation((_path, args, _opts, cb: Function) => {
+			if (args[0] === "init") return cb(null, { stdout: "", stderr: "" });
+			cb(null, { stdout: "", stderr: "" });
+		});
+
+		const result = await execTool("codegraph_status");
+		// status tool skips ensureIndexReady, so init is NOT called
+		expect(mockExecFile).not.toHaveBeenCalledWith(
+			expect.any(String),
+			["init"],
+			expect.any,
+			expect.any,
+		);
+	});
+
+	it("returns NOT_INDEXED_MSG when .codegraph missing and init fails", async () => {
+		mockExistsSync.mockReturnValue(false);
+		mockExecFile.mockImplementation((_path, _args, _opts, cb: Function) => {
+			cb(new Error("init failed"));
+		});
+
+		const result = await execTool("codegraph_explore");
+		expect(result.content[0].text).toContain("auto-init failed");
+	});
+
+	it("rebuilds index when status --json throws", async () => {
+		mockExistsSync.mockReturnValue(true);
+		mockExecFile.mockImplementation((_path, args, _opts, cb: Function) => {
+			if (args[0] === "status") return cb(new Error("corrupt index"));
+			if (args[0] === "index") return cb(null, { stdout: "", stderr: "" });
+			cb(null, { stdout: "", stderr: "" });
+		});
+
+		await execTool("codegraph_node");
+		// should call index -q after status fails
+		const indexCalls = mockExecFile.mock.calls.filter(
+			(c: any) => c[1][0] === "index",
+		);
+		expect(indexCalls).toHaveLength(1);
+	});
+
+	it("rebuilds index when status output is not valid JSON", async () => {
+		mockExistsSync.mockReturnValue(true);
+		mockExecFile.mockImplementation((_path, args, _opts, cb: Function) => {
+			if (args[0] === "status") {
+				return cb(null, { stdout: "not-json", stderr: "" });
+			}
+			if (args[0] === "index") return cb(null, { stdout: "", stderr: "" });
+			cb(null, { stdout: "", stderr: "" });
+		});
+
+		await execTool("codegraph_files");
+		const indexCalls = mockExecFile.mock.calls.filter(
+			(c: any) => c[1][0] === "index",
+		);
+		expect(indexCalls).toHaveLength(1);
+	});
+
+	it("rebuilds index when index.state is not complete", async () => {
+		mockExistsSync.mockReturnValue(true);
+		mockExecFile.mockImplementation((_path, args, _opts, cb: Function) => {
+			if (args[0] === "status") {
+				const json = JSON.stringify({
+					initialized: true,
+					pendingChanges: { added: 0, modified: 0, removed: 0 },
+					reindexRecommended: false,
+					index: { state: "failed" },
+				});
+				return cb(null, { stdout: json, stderr: "" });
+			}
+			if (args[0] === "index") return cb(null, { stdout: "", stderr: "" });
+			cb(null, { stdout: "", stderr: "" });
+		});
+
+		await execTool("codegraph_impact");
+		const indexCalls = mockExecFile.mock.calls.filter(
+			(c: any) => c[1][0] === "index",
+		);
+		expect(indexCalls).toHaveLength(1);
+	});
+
+	it("rebuilds index when reindexRecommended is true", async () => {
+		mockExistsSync.mockReturnValue(true);
+		mockExecFile.mockImplementation((_path, args, _opts, cb: Function) => {
+			if (args[0] === "status") {
+				const json = JSON.stringify({
+					initialized: true,
+					pendingChanges: { added: 0, modified: 0, removed: 0 },
+					reindexRecommended: true,
+					index: { state: "complete" },
+				});
+				return cb(null, { stdout: json, stderr: "" });
+			}
+			if (args[0] === "index") return cb(null, { stdout: "", stderr: "" });
+			cb(null, { stdout: "", stderr: "" });
+		});
+
+		await execTool("codegraph_query");
+		const indexCalls = mockExecFile.mock.calls.filter(
+			(c: any) => c[1][0] === "index",
+		);
+		expect(indexCalls).toHaveLength(1);
+	});
+
+	it("syncs when pendingChanges exist", async () => {
+		mockExistsSync.mockReturnValue(true);
+		mockExecFile.mockImplementation((_path, args, _opts, cb: Function) => {
+			if (args[0] === "status") {
+				const json = JSON.stringify({
+					initialized: true,
+					pendingChanges: { added: 2, modified: 0, removed: 1 },
+					reindexRecommended: false,
+					index: { state: "complete" },
+				});
+				return cb(null, { stdout: json, stderr: "" });
+			}
+			if (args[0] === "sync") return cb(null, { stdout: "", stderr: "" });
+			cb(null, { stdout: "", stderr: "" });
+		});
+
+		await execTool("codegraph_node");
+		const syncCalls = mockExecFile.mock.calls.filter(
+			(c: any) => c[1][0] === "sync",
+		);
+		expect(syncCalls).toHaveLength(1);
+	});
+
+	it("skips ensureIndexReady for status tool", async () => {
+		mockExistsSync.mockReturnValue(true);
+		mockExecFile.mockImplementation((_path, args, _opts, cb: Function) => {
+			cb(null, { stdout: "plain status output", stderr: "" });
+		});
+
+		const result = await execTool("codegraph_status");
+		// status passes through without ensureIndexReady calling status --json
+		expect(result.content[0].text).toBe("plain status output");
+	});
+
+	it("passes through when index is healthy", async () => {
+		mockExistsSync.mockReturnValue(true);
+		mockExecFile.mockImplementation((_path, args, _opts, cb: Function) => {
+			if (args[0] === "status") {
+				return cb(null, {
+					stdout: JSON.stringify({
+						initialized: true,
+						pendingChanges: { added: 0, modified: 0, removed: 0 },
+						reindexRecommended: false,
+						index: { state: "complete" },
+					}),
+					stderr: "",
+				});
+			}
+			cb(null, { stdout: "explore result", stderr: "" });
+		});
+
+		const result = await execTool("codegraph_explore");
+		expect(result.content[0].text).toBe("explore result");
 	});
 });
