@@ -204,11 +204,11 @@ function registerTools(pi: ExtensionAPI, codegraphPath: string) {
 			"Use this instead of Read/Grep for any indexed code.",
 		promptSnippet: "Explore indexed code: source, call paths, blast radius",
 		promptGuidelines: [
-			"Use codegraph_explore before Read or Grep for any indexed code — one call returns source, call paths, and blast radius.",
-			"Don't re-verify codegraph results with grep — results come from a full AST parse that is more accurate.",
-			"Don't reconstruct call flows by hand — name the endpoints in codegraph_explore and it finds the path.",
-			"Use only English symbol/module names — not Chinese, not file paths with .py/.ts.",
-			"If explore returns nothing, try 2-3 narrower symbol names before falling back to Read/Grep.",
+			"Use codegraph_explore before Read/Grep — returns source, call paths, blast radius.",
+			"Don't re-verify with grep — full AST parse is more accurate.",
+			"Name endpoints in codegraph_explore, it finds the call path.",
+			"Use English symbol names, not Chinese or file paths.",
+			"If explore returns nothing, try 2-3 narrower names before Read/Grep.",
 		],
 		parameters: Type.Object({
 			query: Type.String({
@@ -232,8 +232,8 @@ function registerTools(pi: ExtensionAPI, codegraphPath: string) {
 			"Treat the returned line-numbered output as already Read — safe to Edit from.",
 		promptSnippet: "Read a file or symbol: line-numbered source + dependents",
 		promptGuidelines: [
-			"Use codegraph_node instead of Read to get line-numbered source for a file or symbol — treat its output as already Read.",
-			'After codegraph_explore returns symbol names (e.g. "save_sku_xlsx (file.py:27)"), use codegraph_node to read the symbol source + call chain in one call instead of Read.',
+			"Use codegraph_node instead of Read — treats output as already Read, safe to Edit from.",
+			'After explore returns symbol names, use codegraph_node for source + call chain in one call.',
 		],
 		parameters: Type.Object({
 			name: Type.String({ description: "Symbol name or file path" }),
@@ -272,8 +272,8 @@ function registerTools(pi: ExtensionAPI, codegraphPath: string) {
 			"Returns symbol locations and their kinds.",
 		promptSnippet: "Search symbols in the codebase",
 		promptGuidelines: [
-			"Use codegraph_query when you need to find a symbol but don't know its exact name — it does fuzzy search.",
-			"For known symbol names, prefer codegraph_explore or codegraph_node instead (they return more context).",
+			"Use codegraph_query for fuzzy symbol search when exact name is unknown.",
+			"For known symbols, prefer codegraph_explore or codegraph_node — more context.",
 		],
 		parameters: Type.Object({
 			search: Type.String({
@@ -313,9 +313,8 @@ function registerTools(pi: ExtensionAPI, codegraphPath: string) {
 			"Supports directory and glob filtering.",
 		promptSnippet: "Project file structure from the code index",
 		promptGuidelines: [
-			"Use codegraph_files to explore project file structure before reading individual files.",
-			"Use --filter to narrow to a specific directory, --pattern for glob matching.",
-			"Use --format grouped to see symbols organized by file.",
+			"Use codegraph_files to explore project file structure.",
+			"Use --filter for directory, --pattern for glob, --format grouped for symbols-by-file.",
 		],
 		parameters: Type.Object({
 			filter: Type.Optional(
@@ -377,8 +376,8 @@ function registerTools(pi: ExtensionAPI, codegraphPath: string) {
 			"Use before refactoring to understand downstream impact.",
 		promptSnippet: "Analyze impact radius of changing a symbol",
 		promptGuidelines: [
-			"Use codegraph_impact to understand the blast radius before refactoring or deleting a symbol.",
-			"Depth 1 = direct callers only. Depth 2 (default) = callers of callers.",
+			"Use codegraph_impact to check blast radius before refactoring/deleting.",
+			"Depth 1 = direct callers. Depth 2 (default) = indirect callers.",
 		],
 		parameters: Type.Object({
 			symbol: Type.String({
