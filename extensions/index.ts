@@ -7,39 +7,6 @@ import { Type } from "typebox";
 import { Text } from "@earendil-works/pi-tui";
 import { keyHint } from "@earendil-works/pi-coding-agent";
 
-const execFile = promisify(execFileCb);
-
-// ---- Guidelines ----
-
-const EXPLORE_GUIDELINES = [
-	"Use codegraph_explore before Read or Grep for any indexed code — one call returns source, call paths, and blast radius.",
-	"Don't re-verify codegraph results with grep — results come from a full AST parse that is more accurate.",
-	"Don't reconstruct call flows by hand — name the endpoints in codegraph_explore and it finds the path.",
-	"Use only English symbol/module names — not Chinese, not file paths with .py/.ts.",
-	"If explore returns nothing, try 2-3 narrower symbol names before falling back to Read/Grep.",
-];
-
-const NODE_GUIDELINES = [
-	"Use codegraph_node instead of Read to get line-numbered source for a file or symbol — treat its output as already Read.",
-	'After codegraph_explore returns symbol names (e.g. "save_sku_xlsx (file.py:27)"), use codegraph_node to read the symbol source + call chain in one call instead of Read.',
-];
-
-const FILES_GUIDELINES = [
-	"Use codegraph_files to explore project file structure before reading individual files.",
-	"Use --filter to narrow to a specific directory, --pattern for glob matching.",
-	"Use --format grouped to see symbols organized by file.",
-];
-
-const IMPACT_GUIDELINES = [
-	"Use codegraph_impact to understand the blast radius before refactoring or deleting a symbol.",
-	"Depth 1 = direct callers only. Depth 2 (default) = callers of callers.",
-];
-
-const QUERY_GUIDELINES = [
-	"Use codegraph_query when you need to find a symbol but don't know its exact name — it does fuzzy search.",
-	"For known symbol names, prefer codegraph_explore or codegraph_node instead (they return more context).",
-];
-
 // ---- Constants ----
 
 const NOT_INDEXED_MSG =
@@ -48,11 +15,9 @@ const NOT_INDEXED_MSG =
 
 const MaxDiagnosticLength = 1000;
 
-// ---- Path & binary resolution ----
+const execFile = promisify(execFileCb);
 
-function hasIndex(cwd: string): boolean {
-	return existsSync(path.join(cwd, ".codegraph"));
-}
+// ---- Path & binary resolution ----
 
 function resolveOnPath(name: string): string | null {
 	const dirs = (process.env.PATH || "").split(path.delimiter);
@@ -70,10 +35,6 @@ function resolveOnPath(name: string): string | null {
 		}
 	}
 	return null;
-}
-
-function resolveBinary(name: string): string | null {
-	return resolveOnPath(name);
 }
 
 // ---- Sensitive info filtering ----
@@ -126,6 +87,7 @@ function makeRenderResult(maxLines = 10) {
 		);
 	};
 }
+
 // ---- Tool registration ----
 
 function registerTools(pi: ExtensionAPI, codegraphPath: string) {
@@ -138,7 +100,7 @@ function registerTools(pi: ExtensionAPI, codegraphPath: string) {
 			cwd,
 			timeout: 30_000,
 			signal,
-			shell: true,
+			shell: process.platform === "win32",
 		});
 		const out = String(stdout);
 		const filtered = stderr ? sanitizeDiagnostic(String(stderr)) : "";
@@ -153,13 +115,14 @@ function registerTools(pi: ExtensionAPI, codegraphPath: string) {
 			: `CodeGraph error: ${(e as Error).message}`;
 		return { content: [{ type: "text" as const, text: msg }], details: {} };
 	}
+
 	/** Ensure index exists and is healthy: init → status → rebuild/sync. */
 	async function ensureIndexReady(
 		cwd: string,
 		signal?: AbortSignal,
 	): Promise<boolean> {
 		// 1. No index → first-time init
-		if (!hasIndex(cwd)) {
+		if (!existsSync(path.join(cwd, ".codegraph"))) {
 			try {
 				await runCodegraph(["init"], cwd, signal);
 				return true;
@@ -240,7 +203,13 @@ function registerTools(pi: ExtensionAPI, codegraphPath: string) {
 			'Pass symbol names spanning a flow, e.g. "createOrder validateStock". ' +
 			"Use this instead of Read/Grep for any indexed code.",
 		promptSnippet: "Explore indexed code: source, call paths, blast radius",
-		promptGuidelines: EXPLORE_GUIDELINES,
+		promptGuidelines: [
+			"Use codegraph_explore before Read or Grep for any indexed code — one call returns source, call paths, and blast radius.",
+			"Don't re-verify codegraph results with grep — results come from a full AST parse that is more accurate.",
+			"Don't reconstruct call flows by hand — name the endpoints in codegraph_explore and it finds the path.",
+			"Use only English symbol/module names — not Chinese, not file paths with .py/.ts.",
+			"If explore returns nothing, try 2-3 narrower symbol names before falling back to Read/Grep.",
+		],
 		parameters: Type.Object({
 			query: Type.String({
 				description:
@@ -262,7 +231,10 @@ function registerTools(pi: ExtensionAPI, codegraphPath: string) {
 			"or a file path to read the file with line numbers + dependents. " +
 			"Treat the returned line-numbered output as already Read — safe to Edit from.",
 		promptSnippet: "Read a file or symbol: line-numbered source + dependents",
-		promptGuidelines: NODE_GUIDELINES,
+		promptGuidelines: [
+			"Use codegraph_node instead of Read to get line-numbered source for a file or symbol — treat its output as already Read.",
+			'After codegraph_explore returns symbol names (e.g. "save_sku_xlsx (file.py:27)"), use codegraph_node to read the symbol source + call chain in one call instead of Read.',
+		],
 		parameters: Type.Object({
 			name: Type.String({ description: "Symbol name or file path" }),
 			file: Type.Optional(Type.Boolean({ description: "Force file mode" })),
@@ -299,7 +271,10 @@ function registerTools(pi: ExtensionAPI, codegraphPath: string) {
 			"Fuzzy-matches symbol names — useful when you don't know the exact name. " +
 			"Returns symbol locations and their kinds.",
 		promptSnippet: "Search symbols in the codebase",
-		promptGuidelines: QUERY_GUIDELINES,
+		promptGuidelines: [
+			"Use codegraph_query when you need to find a symbol but don't know its exact name — it does fuzzy search.",
+			"For known symbol names, prefer codegraph_explore or codegraph_node instead (they return more context).",
+		],
 		parameters: Type.Object({
 			search: Type.String({
 				description:
@@ -337,7 +312,11 @@ function registerTools(pi: ExtensionAPI, codegraphPath: string) {
 			"Returns a tree, flat list, or symbols-grouped-by-file view. " +
 			"Supports directory and glob filtering.",
 		promptSnippet: "Project file structure from the code index",
-		promptGuidelines: FILES_GUIDELINES,
+		promptGuidelines: [
+			"Use codegraph_files to explore project file structure before reading individual files.",
+			"Use --filter to narrow to a specific directory, --pattern for glob matching.",
+			"Use --format grouped to see symbols organized by file.",
+		],
 		parameters: Type.Object({
 			filter: Type.Optional(
 				Type.String({
@@ -397,7 +376,10 @@ function registerTools(pi: ExtensionAPI, codegraphPath: string) {
 			"Recursively finds direct and indirect callers, showing the blast radius. " +
 			"Use before refactoring to understand downstream impact.",
 		promptSnippet: "Analyze impact radius of changing a symbol",
-		promptGuidelines: IMPACT_GUIDELINES,
+		promptGuidelines: [
+			"Use codegraph_impact to understand the blast radius before refactoring or deleting a symbol.",
+			"Depth 1 = direct callers only. Depth 2 (default) = callers of callers.",
+		],
 		parameters: Type.Object({
 			symbol: Type.String({
 				description: "Symbol name to analyze impact for",
@@ -427,7 +409,7 @@ function registerTools(pi: ExtensionAPI, codegraphPath: string) {
 
 export default function codegraphExtension(pi: ExtensionAPI) {
 	pi.on("session_start", (_event, _ctx) => {
-		const codegraphPath = resolveBinary("codegraph");
+		const codegraphPath = resolveOnPath("codegraph");
 		if (!codegraphPath) return;
 
 		registerTools(pi, codegraphPath);

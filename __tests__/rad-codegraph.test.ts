@@ -1,9 +1,11 @@
 import { describe, expect, it, vi, beforeAll, beforeEach } from "vitest";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
-const mockExecFile = vi.fn();
-const mockAccessSync = vi.fn();
-const mockExistsSync = vi.fn();
+const { mockExecFile, mockAccessSync, mockExistsSync } = vi.hoisted(() => ({
+	mockExecFile: vi.fn(),
+	mockAccessSync: vi.fn(),
+	mockExistsSync: vi.fn(),
+}));
 
 vi.mock("node:fs", () => ({
 	accessSync: mockAccessSync,
@@ -25,6 +27,7 @@ vi.mock("@earendil-works/pi-coding-agent", async (importOriginal) => {
 });
 
 import { accessSync, existsSync } from "node:fs";
+import { sanitizeDiagnostic } from "../extensions/index.js";
 
 type RegisteredTool = { name: string; params: unknown; execute: Function };
 const registeredTools: RegisteredTool[] = [];
@@ -92,28 +95,22 @@ describe("registration", () => {
 
 // ── sanitizeDiagnostic ──────────────────────────────────────────────
 
+
 describe("sanitizeDiagnostic", () => {
-	async function getFn() {
-		const mod = await import("../extensions/index.js");
-		return mod.sanitizeDiagnostic;
-	}
 
 	it("redacts TOKEN= values", async () => {
-		const fn = await getFn();
-		expect(fn("TOKEN=abc123")).toContain("TOKEN=[redacted]");
-		expect(fn("TOKEN=abc123")).not.toContain("abc123");
+		expect(sanitizeDiagnostic("TOKEN=abc123")).toContain("TOKEN=[redacted]");
+		expect(sanitizeDiagnostic("TOKEN=abc123")).not.toContain("abc123");
 	});
 
 	it("redacts Bearer tokens", async () => {
-		const fn = await getFn();
-		const result = fn("Authorization: Bearer secret-token-value-here");
+		const result = sanitizeDiagnostic("Authorization: Bearer secret-token-value-here");
 		expect(result).toContain("Bearer [redacted]");
 		expect(result).not.toContain("secret-token-value-here");
 	});
 
 	it("redacts --api-key, --token, --password flags", async () => {
-		const fn = await getFn();
-		const result = fn("--api-key=hidden --token mytoken --otp 123456");
+		const result = sanitizeDiagnostic("--api-key=hidden --token mytoken --otp 123456");
 		expect(result).toContain("--[redacted]");
 		expect(result).not.toContain("hidden");
 		expect(result).not.toContain("mytoken");
@@ -121,34 +118,29 @@ describe("sanitizeDiagnostic", () => {
 	});
 
 	it("removes ANSI escape sequences", async () => {
-		const fn = await getFn();
-		const result = fn("\u001b[31mfailed\u001b[0m");
+		const result = sanitizeDiagnostic("\u001b[31mfailed\u001b[0m");
 		expect(result).toBe("failed");
 	});
 
 	it("handles API_KEY and APIKEY patterns", async () => {
-		const fn = await getFn();
-		expect(fn("API_KEY=supersecret")).toContain("API_KEY=[redacted]");
-		expect(fn("APIKEY=supersecret")).toContain("APIKEY=[redacted]");
-		expect(fn("MY_AUTH_TOKEN=xyz")).toContain("MY_AUTH_TOKEN=[redacted]");
+		expect(sanitizeDiagnostic("API_KEY=supersecret")).toContain("API_KEY=[redacted]");
+		expect(sanitizeDiagnostic("APIKEY=supersecret")).toContain("APIKEY=[redacted]");
+		expect(sanitizeDiagnostic("MY_AUTH_TOKEN=xyz")).toContain("MY_AUTH_TOKEN=[redacted]");
 	});
 
 	it("truncates output beyond max length", async () => {
-		const fn = await getFn();
 		const long = "Bearer " + "x".repeat(2000);
-		const result = fn(long);
+		const result = sanitizeDiagnostic(long);
 		expect(result.length).toBeLessThan(1100);
 		expect(result).toContain("[redacted]");
 	});
 
 	it("returns clean text unchanged", async () => {
-		const fn = await getFn();
-		expect(fn("hello world")).toBe("hello world");
+		expect(sanitizeDiagnostic("hello world")).toBe("hello world");
 	});
 
 	it("redacts --password flag with space separator", async () => {
-		const fn = await getFn();
-		const result = fn("--password supersecret");
+		const result = sanitizeDiagnostic("--password supersecret");
 		expect(result).toContain("--[redacted]");
 		expect(result).not.toContain("supersecret");
 	});
