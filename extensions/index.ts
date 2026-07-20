@@ -116,7 +116,7 @@ function registerTools(pi: ExtensionAPI, codegraphPath: string) {
 		return { content: [{ type: "text" as const, text: msg }], details: {} };
 	}
 
-	/** Ensure index exists and is healthy: init → status → rebuild/sync. */
+	/** Ensure index exists and is current: init → rebuild if stale → sync. */
 	async function ensureIndexReady(
 		cwd: string,
 		signal?: AbortSignal,
@@ -136,7 +136,7 @@ function registerTools(pi: ExtensionAPI, codegraphPath: string) {
 		try {
 			raw = await runCodegraph(["status", "--json"], cwd, signal);
 		} catch {
-			// status command failed → index may be corrupt → rebuild
+			// status failed → corrupt → rebuild
 			await runCodegraph(["index", "-q"], cwd, signal);
 			return true;
 		}
@@ -145,25 +145,19 @@ function registerTools(pi: ExtensionAPI, codegraphPath: string) {
 		try {
 			status = JSON.parse(raw);
 		} catch {
-			// Non-JSON output → index unhealthy → rebuild
+			// Non-JSON output → unhealthy → rebuild
 			await runCodegraph(["index", "-q"], cwd, signal);
 			return true;
 		}
 
-		// 3. Stale index (state partial/failed or extraction version outdated) → rebuild
-		if (
-			(status.index?.state && status.index.state !== "complete") ||
-			status.reindexRecommended
-		) {
+		// 3. Rebuild if stale (state != "complete", extraction outdated, or reindex recommended)
+		if (status.index?.state !== "complete" || status.reindexRecommended) {
 			await runCodegraph(["index", "-q"], cwd, signal);
 			return true;
 		}
 
-		// 5. Incremental file changes → sync
-		const p = status.pendingChanges;
-		if (p && (p.added > 0 || p.modified > 0 || p.removed > 0)) {
-			await runCodegraph(["sync", "-q"], cwd, signal);
-		}
+		// 4. Always sync — cheap on clean index, catches changes pendingChanges misses
+		await runCodegraph(["sync", "-q"], cwd, signal);
 
 		return true;
 	}
@@ -233,7 +227,7 @@ function registerTools(pi: ExtensionAPI, codegraphPath: string) {
 		promptSnippet: "Read a file or symbol: line-numbered source + dependents",
 		promptGuidelines: [
 			"Use codegraph_node instead of Read — treats output as already Read, safe to Edit from.",
-			'After explore returns symbol names, use codegraph_node for source + call chain in one call.',
+			"After explore returns symbol names, use codegraph_node for source + call chain in one call.",
 		],
 		parameters: Type.Object({
 			name: Type.String({ description: "Symbol name or file path" }),
