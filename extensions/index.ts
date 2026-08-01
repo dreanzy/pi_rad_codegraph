@@ -116,12 +116,12 @@ function registerTools(pi: ExtensionAPI, codegraphPath: string) {
 		return { content: [{ type: "text" as const, text: msg }], details: {} };
 	}
 
-	/** Ensure index exists and is current: init → rebuild if stale → sync. */
+	/** Ensure index exists: init on first use, sync otherwise, rebuild if broken. */
 	async function ensureIndexReady(
 		cwd: string,
 		signal?: AbortSignal,
 	): Promise<boolean> {
-		// 1. No index → first-time init
+		// No index → first-time init
 		if (!existsSync(path.join(cwd, ".codegraph"))) {
 			try {
 				await runCodegraph(["init"], cwd, signal);
@@ -130,35 +130,16 @@ function registerTools(pi: ExtensionAPI, codegraphPath: string) {
 				return false;
 			}
 		}
-
-		// 2. Check index health via status
-		let raw: string;
+		// Sync is cheap on a clean index; only a broken index makes it fail → full rebuild
 		try {
-			raw = await runCodegraph(["status", "--json"], cwd, signal);
+			await runCodegraph(["sync", "-q"], cwd, signal);
 		} catch {
-			// status failed → corrupt → rebuild
-			await runCodegraph(["index", "-q"], cwd, signal);
-			return true;
+			try {
+				await runCodegraph(["index", "-q"], cwd, signal);
+			} catch {
+				return false;
+			}
 		}
-
-		let status;
-		try {
-			status = JSON.parse(raw);
-		} catch {
-			// Non-JSON output → unhealthy → rebuild
-			await runCodegraph(["index", "-q"], cwd, signal);
-			return true;
-		}
-
-		// 3. Rebuild if stale (state != "complete", extraction outdated, or reindex recommended)
-		if (status.index?.state !== "complete" || status.reindexRecommended) {
-			await runCodegraph(["index", "-q"], cwd, signal);
-			return true;
-		}
-
-		// 4. Always sync — cheap on clean index, catches changes pendingChanges misses
-		await runCodegraph(["sync", "-q"], cwd, signal);
-
 		return true;
 	}
 
@@ -188,8 +169,26 @@ function registerTools(pi: ExtensionAPI, codegraphPath: string) {
 		}
 	}
 
+	type ToolDef = Parameters<typeof pi.registerTool>[0];
+
+	function registerCommandTool(
+		def: Omit<ToolDef, "execute" | "renderResult"> & {
+			buildArgs: (params: any) => string[];
+			maxLines?: number;
+		},
+	) {
+		const { buildArgs, maxLines, ...rest } = def;
+		pi.registerTool({
+			...rest,
+			async execute(_toolCallId, params, signal, _onUpdate, ctx) {
+				return toolExec(() => buildArgs(params), ctx, signal);
+			},
+			renderResult: makeRenderResult(maxLines ?? 10),
+		});
+	}
+
 	// ---- codegraph_explore ----
-	pi.registerTool({
+	registerCommandTool({
 		name: "codegraph_explore",
 		label: "CodeGraph Explore",
 		description:
@@ -210,14 +209,12 @@ function registerTools(pi: ExtensionAPI, codegraphPath: string) {
 					'Symbol names spanning a flow, e.g. "createOrder validateStock"',
 			}),
 		}),
-		async execute(_toolCallId, params, signal, _onUpdate, ctx) {
-			return toolExec(() => ["explore", params.query], ctx, signal);
-		},
-		renderResult: makeRenderResult(10),
+		buildArgs: (params) => ["explore", params.query],
+		maxLines: 10,
 	});
 
 	// ---- codegraph_node ----
-	pi.registerTool({
+	registerCommandTool({
 		name: "codegraph_node",
 		label: "CodeGraph Node",
 		description:
@@ -239,25 +236,19 @@ function registerTools(pi: ExtensionAPI, codegraphPath: string) {
 				Type.Number({ description: "Max lines (file mode)" }),
 			),
 		}),
-		async execute(_toolCallId, params, signal, _onUpdate, ctx) {
-			return toolExec(
-				() => {
-					const args = ["node"];
-					if (params.file) args.push("--file");
-					if (params.offset) args.push("--offset", String(params.offset));
-					if (params.limit) args.push("--limit", String(params.limit));
-					args.push(params.name);
-					return args;
-				},
-				ctx,
-				signal,
-			);
+		buildArgs: (params) => {
+			const args = ["node"];
+			if (params.file) args.push("--file");
+			if (params.offset) args.push("--offset", String(params.offset));
+			if (params.limit) args.push("--limit", String(params.limit));
+			args.push(params.name);
+			return args;
 		},
-		renderResult: makeRenderResult(15),
+		maxLines: 15,
 	});
 
 	// ---- codegraph_query ----
-	pi.registerTool({
+	registerCommandTool({
 		name: "codegraph_query",
 		label: "CodeGraph Query",
 		description:
@@ -275,30 +266,25 @@ function registerTools(pi: ExtensionAPI, codegraphPath: string) {
 					'Symbol name to search, e.g. "save_sku" or "QinsilkSpider"',
 			}),
 		}),
-		async execute(_toolCallId, params, signal, _onUpdate, ctx) {
-			return toolExec(() => ["query", params.search], ctx, signal);
-		},
-		renderResult: makeRenderResult(10),
+		buildArgs: (params) => ["query", params.search],
+		maxLines: 10,
 	});
 
 	// ---- codegraph_status ----
-	pi.registerTool({
+	registerCommandTool({
 		name: "codegraph_status",
 		label: "CodeGraph Status",
 		description:
 			"Show index status: symbol count, file count, last sync time. " +
 			"Use before explore/node to check if the index is current.",
 		promptSnippet: "CodeGraph index status",
-		promptGuidelines: [],
 		parameters: Type.Object({}),
-		async execute(_toolCallId, _params, signal, _onUpdate, ctx) {
-			return toolExec(() => ["status"], ctx, signal);
-		},
-		renderResult: makeRenderResult(10),
+		buildArgs: () => ["status"],
+		maxLines: 10,
 	});
 
 	// ---- codegraph_files ----
-	pi.registerTool({
+	registerCommandTool({
 		name: "codegraph_files",
 		label: "CodeGraph Files",
 		description:
@@ -341,27 +327,20 @@ function registerTools(pi: ExtensionAPI, codegraphPath: string) {
 				}),
 			),
 		}),
-		async execute(_toolCallId, params, signal, _onUpdate, ctx) {
-			return toolExec(
-				() => {
-					const args = ["files"];
-					if (params.filter) args.push("--filter", params.filter);
-					if (params.pattern) args.push("--pattern", params.pattern);
-					if (params.format) args.push("--format", params.format);
-					if (params.maxDepth)
-						args.push("--max-depth", String(params.maxDepth));
-					if (params.includeMetadata === false) args.push("--no-metadata");
-					return args;
-				},
-				ctx,
-				signal,
-			);
+		buildArgs: (params) => {
+			const args = ["files"];
+			if (params.filter) args.push("--filter", params.filter);
+			if (params.pattern) args.push("--pattern", params.pattern);
+			if (params.format) args.push("--format", params.format);
+			if (params.maxDepth) args.push("--max-depth", String(params.maxDepth));
+			if (params.includeMetadata === false) args.push("--no-metadata");
+			return args;
 		},
-		renderResult: makeRenderResult(15),
+		maxLines: 15,
 	});
 
 	// ---- codegraph_impact ----
-	pi.registerTool({
+	registerCommandTool({
 		name: "codegraph_impact",
 		label: "CodeGraph Impact",
 		description:
@@ -385,18 +364,12 @@ function registerTools(pi: ExtensionAPI, codegraphPath: string) {
 				}),
 			),
 		}),
-		async execute(_toolCallId, params, signal, _onUpdate, ctx) {
-			return toolExec(
-				() => {
-					const args = ["impact", params.symbol];
-					if (params.depth) args.push("--depth", String(params.depth));
-					return args;
-				},
-				ctx,
-				signal,
-			);
+		buildArgs: (params) => {
+			const args = ["impact", params.symbol];
+			if (params.depth) args.push("--depth", String(params.depth));
+			return args;
 		},
-		renderResult: makeRenderResult(10),
+		maxLines: 10,
 	});
 }
 
