@@ -58,7 +58,7 @@ export function sanitizeDiagnostic(value: string): string {
 }
 
 /** Shared renderResult: show truncated output by default, full on Ctrl+O expand. */
-function makeRenderResult(maxLines = 10) {
+function makeRenderResult(maxLines: number) {
 	return (
 		result: any,
 		{ expanded, isPartial }: { expanded: boolean; isPartial: boolean },
@@ -68,8 +68,7 @@ function makeRenderResult(maxLines = 10) {
 		if (isPartial) {
 			return new Text(theme.fg("warning", "Processing..."), 0, 0);
 		}
-		const text =
-			result.content[0]?.type === "text" ? result.content[0].text : "";
+		const text = result.content[0]?.type === "text" ? result.content[0].text : "";
 		if (expanded) {
 			return new Text(text, 0, 0);
 		}
@@ -107,15 +106,6 @@ function registerTools(pi: ExtensionAPI, codegraphPath: string) {
 		return filtered ? `${out}\n--- stderr ---\n${filtered}` : out;
 	}
 
-	function wrapError(e: any) {
-		const stderr = (e as any).stderr as string | undefined;
-		const stderrInfo = stderr ? sanitizeDiagnostic(stderr) : "";
-		const msg = stderrInfo
-			? `CodeGraph error (exit ${(e as any).code ?? "?"}): ${stderrInfo}`
-			: `CodeGraph error: ${(e as Error).message}`;
-		return { content: [{ type: "text" as const, text: msg }], details: {} };
-	}
-
 	/** Ensure index exists: init on first use, sync otherwise, rebuild if broken. */
 	async function ensureIndexReady(
 		cwd: string,
@@ -150,8 +140,8 @@ function registerTools(pi: ExtensionAPI, codegraphPath: string) {
 	) {
 		try {
 			const args = buildArgs();
-			// Auto-sync before non-status/non-sync tools
-			if (args[0] !== "status" && args[0] !== "sync") {
+			// All non-status tools ensure the index is ready first
+			if (args[0] !== "status") {
 				if (!(await ensureIndexReady(ctx.cwd, signal))) {
 					return {
 						content: [{ type: "text" as const, text: NOT_INDEXED_MSG }],
@@ -165,7 +155,12 @@ function registerTools(pi: ExtensionAPI, codegraphPath: string) {
 				details: {},
 			};
 		} catch (e: any) {
-			return wrapError(e);
+			const stderr = (e as any).stderr as string | undefined;
+			const stderrInfo = stderr ? sanitizeDiagnostic(stderr) : "";
+			const msg = stderrInfo
+				? `CodeGraph error (exit ${(e as any).code ?? "?"}): ${stderrInfo}`
+				: `CodeGraph error: ${(e as Error).message}`;
+			return { content: [{ type: "text" as const, text: msg }], details: {} };
 		}
 	}
 
@@ -174,7 +169,7 @@ function registerTools(pi: ExtensionAPI, codegraphPath: string) {
 	function registerCommandTool(
 		def: Omit<ToolDef, "execute" | "renderResult"> & {
 			buildArgs: (params: any) => string[];
-			maxLines?: number;
+			maxLines: number;
 		},
 	) {
 		const { buildArgs, maxLines, ...rest } = def;
@@ -183,7 +178,7 @@ function registerTools(pi: ExtensionAPI, codegraphPath: string) {
 			async execute(_toolCallId, params, signal, _onUpdate, ctx) {
 				return toolExec(() => buildArgs(params), ctx, signal);
 			},
-			renderResult: makeRenderResult(maxLines ?? 10),
+			renderResult: makeRenderResult(maxLines),
 		});
 	}
 
@@ -232,9 +227,7 @@ function registerTools(pi: ExtensionAPI, codegraphPath: string) {
 			offset: Type.Optional(
 				Type.Number({ description: "1-based start line (file mode)" }),
 			),
-			limit: Type.Optional(
-				Type.Number({ description: "Max lines (file mode)" }),
-			),
+			limit: Type.Optional(Type.Number({ description: "Max lines (file mode)" })),
 		}),
 		buildArgs: (params) => {
 			const args = ["node"];
@@ -262,8 +255,7 @@ function registerTools(pi: ExtensionAPI, codegraphPath: string) {
 		],
 		parameters: Type.Object({
 			search: Type.String({
-				description:
-					'Symbol name to search, e.g. "save_sku" or "QinsilkSpider"',
+				description: 'Symbol name to search, e.g. "save_sku" or "QinsilkSpider"',
 			}),
 		}),
 		buildArgs: (params) => ["query", params.search],
