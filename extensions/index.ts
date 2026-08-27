@@ -114,7 +114,8 @@ function registerTools(pi: ExtensionAPI, codegraphPath: string) {
 		// No index → first-time init
 		if (!existsSync(path.join(cwd, ".codegraph"))) {
 			try {
-				await runCodegraph(["init"], cwd, signal);
+				// --yes: v1.6.0+ init can prompt (watch fallback); never block a non-TTY auto-init.
+				await runCodegraph(["init", "--yes"], cwd, signal);
 				return true;
 			} catch {
 				return false;
