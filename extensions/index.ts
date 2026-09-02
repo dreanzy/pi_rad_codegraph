@@ -89,6 +89,18 @@ function makeRenderResult(maxLines: number) {
 
 // ---- Tool registration ----
 
+const ROUTING_GUIDANCE =
+	"[CodeGraph routing]\n" +
+	"- For architecture/flow/impact/cross-file questions: run codegraph_explore FIRST — it returns source, call paths, and blast radius in one shot.\n" +
+	"- Known symbol: codegraph_node (line-numbered source + callers/callees; output counts as Read, safe to Edit from). Unknown name: codegraph_query.\n" +
+	"- Project layout: codegraph_files. Refactor/delete: run codegraph_impact first to see the blast radius.\n" +
+	"- Suspect a stale or empty index: run codegraph_status (Files: 0 means nothing is indexed).\n" +
+	"- Fall back to Read/Grep only when codegraph_status reports Files: 0, or you need literal text/pattern matching CodeGraph cannot serve.";
+
+const TOOLS_DISABLED_NOTICE =
+	"codegraph CLI not found on PATH — codegraph_* tools disabled. " +
+	"Install it (e.g. `npm install -g @colbymchenry/codegraph`) and restart pi (/reload) to enable.";
+
 function registerTools(pi: ExtensionAPI, codegraphPath: string) {
 	async function runCodegraph(
 		args: string[],
@@ -333,6 +345,7 @@ function registerTools(pi: ExtensionAPI, codegraphPath: string) {
 	});
 
 	// ---- codegraph_impact ----
+
 	registerCommandTool({
 		name: "codegraph_impact",
 		label: "CodeGraph Impact",
@@ -367,10 +380,27 @@ function registerTools(pi: ExtensionAPI, codegraphPath: string) {
 }
 
 export default function codegraphExtension(pi: ExtensionAPI) {
-	pi.on("session_start", (_event, _ctx) => {
+	let toolsRegistered = false;
+
+	pi.on("session_start", (_event, ctx) => {
 		const codegraphPath = resolveOnPath("codegraph");
-		if (!codegraphPath) return;
+		if (!codegraphPath) {
+			// codegraph CLI 不在 PATH → 不再静默:弹一条 UI 通知(不进 LLM 上下文)。
+			toolsRegistered = false;
+			ctx.ui?.notify?.(TOOLS_DISABLED_NOTICE, "warning");
+			return;
+		}
 
 		registerTools(pi, codegraphPath);
+		toolsRegistered = true;
+	});
+
+	// 改动 1:before_agent_start 注入静态路由引导段。内容每轮固定不变,
+	// 不破坏前缀缓存命中;仅在工具真正注册后注入(空引导浪费 token)。
+	pi.on("before_agent_start", (event) => {
+		if (!toolsRegistered) return;
+		return {
+			systemPrompt: event.systemPrompt + "\n\n" + ROUTING_GUIDANCE,
+		};
 	});
 }

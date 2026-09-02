@@ -31,8 +31,17 @@ import { sanitizeDiagnostic } from "../extensions/index.js";
 type RegisteredTool = { name: string; params: unknown; execute: Function };
 const registeredTools: RegisteredTool[] = [];
 
-type OnHandler = (event: any, ctx: any) => void | Promise<void>;
+type OnHandler = (
+	event: any,
+	ctx: any,
+) =>
+	| void
+	| Promise<void>
+	| { systemPrompt?: string }
+	| Promise<{ systemPrompt?: string }>;
 let sessionStartHandler: OnHandler | undefined;
+let beforeAgentStartHandler: OnHandler | undefined;
+const uiNotifications: Array<{ message: string; type?: string }> = [];
 
 const mockPi = {
 	registerTool: vi.fn(
@@ -46,6 +55,7 @@ const mockPi = {
 	),
 	on: vi.fn((event: string, handler: OnHandler) => {
 		if (event === "session_start") sessionStartHandler = handler;
+		if (event === "before_agent_start") beforeAgentStartHandler = handler;
 	}),
 } as unknown as ExtensionAPI;
 
@@ -57,7 +67,18 @@ beforeAll(async () => {
 beforeEach(() => {
 	vi.clearAllMocks();
 	registeredTools.length = 0;
+	uiNotifications.length = 0;
 });
+
+function sessionCtx(): any {
+	return {
+		ui: {
+			notify: vi.fn((message: string, type?: string) => {
+				uiNotifications.push({ message, type });
+			}),
+		},
+	};
+}
 
 // ── Registration ────────────────────────────────────────────────────
 
@@ -89,6 +110,56 @@ describe("registration", () => {
 		await sessionStartHandler!({}, { cwd: "/test/project" });
 
 		expect(mockPi.registerTool).not.toHaveBeenCalled();
+	});
+
+	it("sends a visible notice when codegraph binary is not found", async () => {
+		mockExistsSync.mockReturnValue(true);
+		mockAccessSync.mockImplementation(() => {
+			throw new Error("not found");
+		});
+
+		await sessionStartHandler!({}, sessionCtx());
+
+		expect(uiNotifications.length).toBe(1);
+		expect(uiNotifications[0].type).toBe("warning");
+		expect(uiNotifications[0].message).toContain("codegraph CLI not found");
+	});
+});
+
+// ── Prompt guidance (改动 1) ────────────────────────────────────────
+
+describe("before_agent_start guidance", () => {
+	it("appends static routing guidance when tools are registered", async () => {
+		mockAccessSync.mockImplementation((p: any) => {
+			if (String(p).includes("codegraph")) return;
+			throw new Error("not found");
+		});
+		await sessionStartHandler!({}, { cwd: "/test/project" });
+
+		const result = await beforeAgentStartHandler!(
+			{ systemPrompt: "BASE PROMPT", prompt: "hi", images: [] },
+			{},
+		);
+
+		expect(result).toBeTruthy();
+		const sp = result as { systemPrompt?: string };
+		expect(sp.systemPrompt).toContain("BASE PROMPT");
+		expect(sp.systemPrompt).toContain("[CodeGraph routing]");
+		expect(sp.systemPrompt).toContain("codegraph_explore FIRST");
+		expect(sp.systemPrompt).not.toContain("undefined");
+	});
+
+	it("injects nothing when tools were never registered", async () => {
+		mockAccessSync.mockImplementation(() => {
+			throw new Error("not found");
+		});
+		await sessionStartHandler!({}, { cwd: "/test/project" });
+
+		const result = await beforeAgentStartHandler!(
+			{ systemPrompt: "BASE", prompt: "hi", images: [] },
+			{},
+		);
+		expect(result).toBeUndefined();
 	});
 });
 
